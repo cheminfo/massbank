@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.2](https://github.com/cheminfo/massbank/compare/v0.0.1...v0.0.2) (2025-11-05)
+
+
+### Bug Fixes
+
+* add type for options ([ecd237d](https://github.com/cheminfo/massbank/commit/ecd237de79aef4bbf73cb59e1ce11536501c582c))
+
 ## 0.0.1 (2025-11-05)
 
 
