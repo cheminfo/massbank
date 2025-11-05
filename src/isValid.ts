@@ -1,10 +1,16 @@
+import type { FifoLogger } from 'fifo-logger';
+
+export interface IsValidOptions {
+  logger?: FifoLogger;
+}
+
 /**
- * My module
+ * Check if massbank file is valid
  * @param text
  * @param options
  * @returns A very important number
  */
-export function isValid(text: string, options = {}): boolean {
+export function isValid(text: string, options: IsValidOptions = {}): boolean {
   const { logger } = options;
 
   console.log(logger);
