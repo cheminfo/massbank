@@ -1,0 +1,49 @@
+{
+  "name": "massbank",
+  "version": "0.0.0",
+  "license": "MIT",
+  "description": "Utilities to submit massbank data",
+  "keywords": [],
+  "author": "Luc Patiny",
+  "type": "module",
+  "exports": {
+    ".": "./lib/index.js"
+  },
+  "files": [
+    "lib",
+    "src"
+  ],
+  "scripts": {
+    "check-types": "tsc --noEmit",
+    "clean": "rimraf coverage lib",
+    "eslint": "eslint .",
+    "eslint-fix": "eslint . --fix",
+    "prepack": "npm run tsc",
+    "prettier": "prettier --check .",
+    "prettier-write": "prettier --write .",
+    "test": "npm run test-only && npm run check-types && npm run eslint && npm run prettier",
+    "test-only": "vitest run --coverage",
+    "tsc": "npm run clean && npm run tsc-build",
+    "tsc-build": "tsc --project tsconfig.build.json"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@vitest/coverage-v8": "^4.0.7",
+    "@zakodium/tsconfig": "^1.0.2",
+    "eslint": "^9.39.1",
+    "eslint-config-cheminfo-typescript": "^20.0.0",
+    "fifo-logger": "^2.0.1",
+    "prettier": "^3.6.2",
+    "rimraf": "^6.1.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.7"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cheminfo/massbank.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cheminfo/massbank/issues"
+  },
+  "homepage": "https://github.com/cheminfo/massbank#readme"
+}

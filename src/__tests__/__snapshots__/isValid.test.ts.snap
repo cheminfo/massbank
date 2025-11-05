@@ -1,0 +1,13 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`should return 42 1`] = `
+[
+  {
+    "id": 1,
+    "level": 30,
+    "levelLabel": "info",
+    "message": "you forget a abc",
+    "meta": {},
+  },
+]
+`;
