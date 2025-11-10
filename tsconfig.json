@@ -3,7 +3,10 @@
   "compilerOptions": {
     "noUncheckedIndexedAccess": true,
     "outDir": "lib",
-    "types": ["node"]
+    "types": ["node"],
+    "lib": ["ES2020"],
+    "module": "ES2020",
+    "moduleResolution": "bundler"
   },
   "include": ["src", "vite*.ts"]
 }
