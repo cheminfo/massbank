@@ -75,10 +75,20 @@ export class MassBankValidator {
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : 'Unknown error';
+
+        // Runtime detection for a validation-style error object. We can't use
+        // `instanceof ValidationError` because `ValidationError` is a TS
+        // interface (no runtime class). Many parts of the code return or
+        // throw plain objects shaped like ValidationError, so detect that
+        // shape and prefer marking the error as 'validation'. Otherwise
+        // fallback to 'other'. Keep the logged message and file unchanged.
+        const isValidationError =
+          error && typeof error === 'object' && 'type' in error && (error as unknown as { type?: string }).type === 'validation';
+
         allErrors.push({
           file: filePath,
           message: `Error processing file: ${errorMessage}`,
-          type: error instanceof ParseException ? 'parse' : 'other',
+          type: isValidationError ? 'validation' : 'other',
         });
       }
     }
