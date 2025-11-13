@@ -59,6 +59,7 @@ export async function isValid(
 
     // Check serialization round-trip
     const serialized = serializeRecord(record);
+    // eslint-disable-next-line unicorn/prefer-string-replace-all
     const normalizedOriginal = text.replace(/\r\n?/g, '\n');
     // Normalize trailing newlines for comparison (both should end with \n)
     const normalizedOriginalTrimmed = `${normalizedOriginal.trimEnd()  }\n`;

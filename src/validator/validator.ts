@@ -61,37 +61,39 @@ export class MassBankValidator {
     const allWarnings: ValidationWarning[] = [];
     const accessions: string[] = [];
 
-    // Process all files
-    for (const filePath of resolvedFiles) {
-      try {
-        const fileContent = await FileUtils.readFile(filePath);
-        const result = await this.validateFile(filePath, fileContent, options);
+    // Process all files (in parallel for performance, similar to Java's parallelStream)
+    await Promise.all(
+      resolvedFiles.map(async (filePath) => {
+        try {
+          const fileContent = await FileUtils.readFile(filePath);
+          const result = await this.validateFile(filePath, fileContent, options);
 
-        allErrors.push(...result.errors);
-        allWarnings.push(...result.warnings);
-        if (result.accession) {
-          accessions.push(result.accession);
+          allErrors.push(...result.errors);
+          allWarnings.push(...result.warnings);
+          if (result.accession) {
+            accessions.push(result.accession);
+          }
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : 'Unknown error';
+
+          // Runtime detection for a validation-style error object. We can't use
+          // `instanceof ValidationError` because `ValidationError` is a TS
+          // interface (no runtime class). Many parts of the code return or
+          // throw plain objects shaped like ValidationError, so detect that
+          // shape and prefer marking the error as 'validation'. Otherwise
+          // fallback to 'other'. Keep the logged message and file unchanged.
+          const isValidationError =
+            error && typeof error === 'object' && 'type' in error && (error as unknown as { type?: string }).type === 'validation';
+
+          allErrors.push({
+            file: filePath,
+            message: `Error processing file: ${errorMessage}`,
+            type: isValidationError ? 'validation' : 'other',
+          });
         }
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : 'Unknown error';
-
-        // Runtime detection for a validation-style error object. We can't use
-        // `instanceof ValidationError` because `ValidationError` is a TS
-        // interface (no runtime class). Many parts of the code return or
-        // throw plain objects shaped like ValidationError, so detect that
-        // shape and prefer marking the error as 'validation'. Otherwise
-        // fallback to 'other'. Keep the logged message and file unchanged.
-        const isValidationError =
-          error && typeof error === 'object' && 'type' in error && (error as unknown as { type?: string }).type === 'validation';
-
-        allErrors.push({
-          file: filePath,
-          message: `Error processing file: ${errorMessage}`,
-          type: isValidationError ? 'validation' : 'other',
-        });
-      }
-    }
+      }),
+    );
 
     // Check for duplicate accessions
     const duplicateErrors = this.checkDuplicates(accessions);
@@ -221,4 +223,82 @@ export async function validate(
 ): Promise<ValidationResult> {
   const validator = createValidator(options.logger);
   return validator.validate(paths, options);
+}
+
+/**
+ * Convenience function to validate a single in-memory record string.
+ * Useful for browser or API use-cases where the record content is not
+ * coming from the filesystem. This mirrors the behavior of validating
+ * a single file, but without any path resolution.
+ *
+ * The returned ValidationResult follows the same semantics as `validate`:
+ * - `errors` contains parse/validation/serialization issues
+ * - `warnings` contains non-blocking issues (e.g. NonStandardCharsRule)
+ * - `accessions` contains the parsed ACCESSION (if any)
+ * - `filesProcessed` is 1 if parsing was attempted, 0 otherwise
+ * @param content - Full record text to validate
+ * @param filename - Logical filename for error reporting (e.g. UI label)
+ * @param options - Validation options
+ */
+export async function validateContent(
+  content: string,
+  filename: string,
+  options: ValidationOptions = {},
+): Promise<ValidationResult> {
+  const errors: ValidationError[] = [];
+  const warnings: ValidationWarning[] = [];
+  const accessions: string[] = [];
+
+  // Parse the record
+  let record;
+  try {
+    record = parseRecord(content);
+  } catch (error) {
+    if (error instanceof ParseException) {
+      errors.push({
+        file: filename,
+        line: error.parseError.line,
+        column: error.parseError.column,
+        message: error.parseError.message,
+        type: 'parse',
+      });
+      return {
+        success: false,
+        errors,
+        warnings,
+        accessions,
+        filesProcessed: 1,
+      };
+    }
+    throw error;
+  }
+
+  // Apply validation rules (same default rules as RecordValidator)
+  const recordValidator = new RecordValidator();
+  const rules = recordValidator.getRules();
+  for (const rule of rules) {
+    const ruleErrors = rule.validate(record, content, filename, {
+      legacy: options.legacy,
+    });
+    errors.push(...ruleErrors);
+
+    const ruleWarnings = rule.getWarnings(record, content, filename, {
+      legacy: options.legacy,
+    });
+    warnings.push(...ruleWarnings);
+  }
+
+  if (record.ACCESSION) {
+    accessions.push(record.ACCESSION);
+  }
+
+  const success = errors.length === 0;
+
+  return {
+    success,
+    errors,
+    warnings,
+    accessions,
+    filesProcessed: 1,
+  };
 }

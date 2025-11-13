@@ -17,7 +17,7 @@ describe('RecordSerializer', () => {
   it('should serialize and round-trip TST00001', async () => {
     const original = await readFile(
       join(TEST_FILES_DIR, 'MSBNK-test-TST00001.txt'),
-      'utf-8',
+      'utf8',
     );
     const record = parseRecord(original);
     const serialized = serializeRecord(record);
@@ -29,7 +29,7 @@ describe('RecordSerializer', () => {
   it('should serialize and round-trip TST00002', async () => {
     const original = await readFile(
       join(TEST_FILES_DIR, 'MSBNK-test-TST00002.txt'),
-      'utf-8',
+      'utf8',
     );
     const record = parseRecord(original);
     const serialized = serializeRecord(record);
@@ -41,7 +41,7 @@ describe('RecordSerializer', () => {
   it('should serialize and round-trip TST00003', async () => {
     const original = await readFile(
       join(TEST_FILES_DIR, 'MSBNK-test-TST00003.txt'),
-      'utf-8',
+      'utf8',
     );
     const record = parseRecord(original);
     const serialized = serializeRecord(record);
@@ -53,13 +53,13 @@ describe('RecordSerializer', () => {
   it('should preserve all fields in serialization', async () => {
     const original = await readFile(
       join(TEST_FILES_DIR, 'MSBNK-test-TST00001.txt'),
-      'utf-8',
+      'utf8',
     );
     const record = parseRecord(original);
     const serialized = serializeRecord(record);
     const reParsed = parseRecord(serialized);
 
     expect(reParsed.ACCESSION).toBe(record.ACCESSION);
-    expect(reParsed.PK$PEAK).toEqual(record.PK$PEAK);
+    expect(reParsed.PK$PEAK).toStrictEqual(record.PK$PEAK);
   });
 });

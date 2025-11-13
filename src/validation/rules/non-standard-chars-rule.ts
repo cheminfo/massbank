@@ -1,3 +1,4 @@
+import { PositionUtils } from '../../parser/index.js';
 import type { Record } from '../../record.js';
 import type { ValidationError, ValidationWarning } from '../../types.js';
 import type {
@@ -6,17 +7,29 @@ import type {
 } from '../interfaces.js';
 
 /**
- * Pattern for allowed characters (from Java Validator)
+ * Pattern for allowed characters (from Java Validator).
+ * Note: We deliberately allow both LF (`\n`) and CR (`\r`) here so CRLF
+ * line endings do not trigger non-standard character warnings. The Java CLI
+ * treats CR as non-standard only via logging; for this library we avoid
+ * warning on platform-specific line endings while still flagging real
+ * non-ASCII issues.
  */
 const NON_STANDARD_CHARS_PATTERN =
-  /[^\w\n\-[\]."\\ ;:–=+,|(){}/$%@'°!?#`^*&<>µáćÉéóäöü©]/;
+  /[^\w\r\n\-[\]."\\ ;:–=+,|(){}/$%@'°!?#`^*&<>µáćÉéóäöü©]/;
 
 /**
  * Validates non-standard characters in the record
- * Single Responsibility: Only validates character set
+ * Single Responsibility: Only validates character set.
+ * This rule is warning-only and never produces blocking validation errors.
  */
 export class NonStandardCharsRule implements IValidationRule {
-  validate(): ValidationError[] {
+  validate(
+    _record: Record,
+    _originalText: string,
+    _filename: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _options: ValidationRuleOptions,
+  ): ValidationError[] {
     return [];
   }
 
@@ -24,6 +37,7 @@ export class NonStandardCharsRule implements IValidationRule {
     record: Record,
     originalText: string,
     filename: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _options: ValidationRuleOptions,
   ): ValidationWarning[] {
     const warnings: ValidationWarning[] = [];
@@ -35,41 +49,19 @@ export class NonStandardCharsRule implements IValidationRule {
 
     const match = NON_STANDARD_CHARS_PATTERN.exec(originalText);
     if (match?.index !== undefined) {
-      const position = match.index + match[0].length;
-      if (position < originalText.length) {
-        const { line, column } = this.getLineColumn(originalText, position);
-        warnings.push({
-          file: filename,
-          line,
-          column,
-          message:
-            'Non standard ASCII character found. This might be an error. Please check carefully.',
-        });
-      }
+      const { line, column } = PositionUtils.getLineColumn(
+        originalText,
+        match.index,
+      );
+      warnings.push({
+        file: filename,
+        line,
+        column,
+        message:
+          'Non standard ASCII character found. This might be an error. Please check carefully.',
+      });
     }
 
     return warnings;
-  }
-
-  private getLineColumn(
-    text: string,
-    position: number,
-  ): { line: number; column: number } {
-    const lines = text.split(/\r?\n/);
-    let offset = 0;
-    let lineNumber = 1;
-    let column = 1;
-
-    for (let i = 0; i < lines.length; i++) {
-      const lineLength = lines[i]!.length + 1; // +1 for newline
-      if (offset + lineLength > position) {
-        lineNumber = i + 1;
-        column = position - offset + 1;
-        break;
-      }
-      offset += lineLength;
-    }
-
-    return { line: lineNumber, column };
   }
 }

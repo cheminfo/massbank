@@ -78,7 +78,7 @@ export class SplashValidator implements ISplashValidator {
       }
 
       return calculatedSplash === record.PK$SPLASH;
-    } catch (error) {
+    } catch {
       // If validation fails due to API issues, allow it to pass
       // (we don't want to block validation if API is down)
       // SPLASH validation failed

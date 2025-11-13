@@ -1,3 +1,4 @@
+import { PositionUtils } from '../../parser/index.js';
 import type { Record } from '../../record.js';
 import { serializeRecord } from '../../serializer/index.js';
 import type { ValidationError, ValidationWarning } from '../../types.js';
@@ -8,19 +9,22 @@ import type {
 
 /**
  * Validates serialization round-trip (parse -> serialize -> compare)
- * Single Responsibility: Only validates serialization consistency
+ * Single Responsibility: Only validates serialization consistency.
+ * This rule produces blocking validation errors but no warnings.
  */
 export class SerializationRule implements IValidationRule {
   validate(
     record: Record,
     originalText: string,
     filename: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _options: ValidationRuleOptions,
   ): ValidationError[] {
     const errors: ValidationError[] = [];
 
     try {
       const serialized = serializeRecord(record);
+      // eslint-disable-next-line unicorn/prefer-string-replace-all
       const normalizedOriginal = originalText.replace(/\r\n?/g, '\n');
 
       // Find first difference
@@ -30,10 +34,7 @@ export class SerializationRule implements IValidationRule {
       );
 
       if (diffPosition !== -1) {
-        const { line, column } = this.getLineColumn(
-          normalizedOriginal,
-          diffPosition,
-        );
+        const { line, column } = PositionUtils.getLineColumn(normalizedOriginal, diffPosition);
         errors.push({
           file: filename,
           line,
@@ -69,27 +70,5 @@ export class SerializationRule implements IValidationRule {
       return minLength;
     }
     return -1;
-  }
-
-  private getLineColumn(
-    text: string,
-    position: number,
-  ): { line: number; column: number } {
-    const lines = text.split(/\r?\n/);
-    let offset = 0;
-    let lineNumber = 1;
-    let column = 1;
-
-    for (let i = 0; i < lines.length; i++) {
-      const lineLength = lines[i]!.length + 1; // +1 for newline
-      if (offset + lineLength > position) {
-        lineNumber = i + 1;
-        column = position - offset + 1;
-        break;
-      }
-      offset += lineLength;
-    }
-
-    return { line: lineNumber, column };
   }
 }

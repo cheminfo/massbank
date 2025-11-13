@@ -21,7 +21,7 @@ describe('AccessionMatchRule', () => {
   it('should validate matching accession and filename', async () => {
     const content = await readFile(
       join(TEST_FILES_DIR, 'MSBNK-test-TST00001.txt'),
-      'utf-8',
+      'utf8',
     );
     const record = parseRecord(content);
     const rule = new AccessionMatchRule();
@@ -39,7 +39,7 @@ describe('AccessionMatchRule', () => {
   it('should error on mismatched accession and filename', async () => {
     const content = await readFile(
       join(TEST_FILES_DIR, 'MSBNK-test-TST00001.txt'),
-      'utf-8',
+      'utf8',
     );
     const record = parseRecord(content);
     const rule = new AccessionMatchRule();
@@ -55,21 +55,20 @@ describe('NonStandardCharsRule', () => {
   it('should not warn on standard characters', async () => {
     const content = await readFile(
       join(TEST_FILES_DIR, 'MSBNK-test-TST00001.txt'),
-      'utf-8',
+      'utf8',
     );
     const record = parseRecord(content);
     const rule = new NonStandardCharsRule();
 
     const warnings = rule.getWarnings(record, content, 'test.txt', {});
 
-    // Should have no warnings or minimal warnings for valid files
-    expect(Array.isArray(warnings)).toBe(true);
+    expect(warnings).toHaveLength(0);
   });
 
   it('should skip deprecated records', async () => {
     const content = await readFile(
       join(TEST_FILES_DIR, 'MSBNK-test-TST00003.txt'),
-      'utf-8',
+      'utf8',
     );
     const record = parseRecord(content);
     const rule = new NonStandardCharsRule();
@@ -85,7 +84,7 @@ describe('SerializationRule', () => {
   it('should validate serialization round-trip', async () => {
     const content = await readFile(
       join(TEST_FILES_DIR, 'MSBNK-test-TST00001.txt'),
-      'utf-8',
+      'utf8',
     );
     const record = parseRecord(content);
     const rule = new SerializationRule();

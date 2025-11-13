@@ -9,13 +9,15 @@ import type {
 
 /**
  * Validates that ACCESSION matches the filename
- * Single Responsibility: Only validates ACCESSION-filename matching
+ * Single Responsibility: Only validates ACCESSION-filename matching.
+ * This rule produces blocking validation errors but no warnings.
  */
 export class AccessionMatchRule implements IValidationRule {
   validate(
     record: Record,
     _originalText: string,
     filename: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _options: ValidationRuleOptions,
   ): ValidationError[] {
     const errors: ValidationError[] = [];

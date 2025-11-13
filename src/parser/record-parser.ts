@@ -77,7 +77,7 @@ export class RecordParser implements IRecordParser {
         throw new ParseException(
           PositionUtils.createParseError(
             text,
-            PositionUtils.getPosition(lines, i, 0),
+            PositionUtils.getPosition(lines, i + 1, 1),
             'Invalid line format: expected "KEY: value" or table data',
           ),
         );
@@ -113,7 +113,7 @@ export class RecordParser implements IRecordParser {
           throw new ParseException(
             PositionUtils.createParseError(
               text,
-              PositionUtils.getPosition(lines, i, colonIndex + 1),
+              PositionUtils.getPosition(lines, i + 1, colonIndex + 2),
               message,
             ),
           );

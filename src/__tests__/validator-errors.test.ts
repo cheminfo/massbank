@@ -84,6 +84,28 @@ RECORD_TITLE: Test 2
     }
   });
 
+  it('should surface non-standard character warnings from validation rules', async () => {
+    const content = `ACCESSION: WARN-TEST
+RECORD_TITLE: Te™st
+//`;
+    const tempFile = join(TEMP_TEST_DIR, 'non-standard-char-test.txt');
+
+    await writeFile(tempFile, content);
+
+    try {
+      const result = await validate(tempFile);
+
+      expect(result.warnings.length).toBeGreaterThan(0);
+      expect(
+        result.warnings.some((w) =>
+          w.message.includes('Non standard ASCII character found'),
+        ),
+      ).toBe(true);
+    } finally {
+      await unlink(tempFile).catch(() => {});
+    }
+  });
+
   it('should handle empty directory', async () => {
     const result = await validate('non-existent-directory/');
 

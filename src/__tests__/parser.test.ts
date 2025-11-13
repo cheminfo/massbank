@@ -16,7 +16,7 @@ describe('RecordParser', () => {
   it('should parse a valid record file', async () => {
     const content = await readFile(
       join(TEST_FILES_DIR, 'MSBNK-test-TST00001.txt'),
-      'utf-8',
+      'utf8',
     );
     const record = parseRecord(content);
 
@@ -34,7 +34,7 @@ describe('RecordParser', () => {
   it('should parse record with multiple CH$NAME fields', async () => {
     const content = await readFile(
       join(TEST_FILES_DIR, 'MSBNK-test-TST00002.txt'),
-      'utf-8',
+      'utf8',
     );
     const record = parseRecord(content);
 
@@ -47,7 +47,7 @@ describe('RecordParser', () => {
   it('should parse record with annotations', async () => {
     const content = await readFile(
       join(TEST_FILES_DIR, 'MSBNK-test-TST00003.txt'),
-      'utf-8',
+      'utf8',
     );
     const record = parseRecord(content);
 
@@ -59,7 +59,7 @@ describe('RecordParser', () => {
   it('should parse deprecated records', async () => {
     const content = await readFile(
       join(TEST_FILES_DIR, 'MSBNK-test-TST00003.txt'),
-      'utf-8',
+      'utf8',
     );
     const record = parseRecord(content);
 
@@ -85,11 +85,15 @@ describe('RecordParser', () => {
       'MSBNK-test-TST00003.txt',
     ];
 
-    for (const file of files) {
-      const content = await readFile(join(TEST_FILES_DIR, file), 'utf8');
-      const record = parseRecord(content);
+    const records = await Promise.all(
+      files.map(async (file) => {
+        const content = await readFile(join(TEST_FILES_DIR, file), 'utf8');
+        return parseRecord(content);
+      }),
+    );
 
-      expect(record.ACCESSION).toBeTruthy();
+    for (const record of records) {
+      expect(record.ACCESSION.length).toBeGreaterThan(0);
       expect(typeof record.ACCESSION).toBe('string');
     }
   });

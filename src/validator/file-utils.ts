@@ -31,15 +31,17 @@ export const FileUtils = {
       try {
         const entries = await readdir(dir, { withFileTypes: true });
 
-        for (const entry of entries) {
-          const fullPath = join(dir, entry.name);
+        await Promise.all(
+          entries.map(async (entry) => {
+            const fullPath = join(dir, entry.name);
 
-          if (entry.isDirectory()) {
-            await walkDir(fullPath);
-          } else if (entry.isFile() && extname(entry.name) === '.txt') {
-            files.push(fullPath);
-          }
-        }
+            if (entry.isDirectory()) {
+              await walkDir(fullPath);
+            } else if (entry.isFile() && extname(entry.name) === '.txt') {
+              files.push(fullPath);
+            }
+          }),
+        );
       } catch {
         // Skip directories we can't read
       }
@@ -69,18 +71,19 @@ export const FileUtils = {
    * @param paths
    */
   async resolvePaths(paths: string[]): Promise<string[]> {
-    const resolvedFiles: string[] = [];
+    const resolvedFilesArrays = await Promise.all(
+      paths.map(async (path) => {
+        const type = await this.getPathType(path);
+        if (type === 'file' && extname(path) === '.txt') {
+          return [path];
+        }
+        if (type === 'directory') {
+          return this.findRecordFiles(path);
+        }
+        return [];
+      }),
+    );
 
-    for (const path of paths) {
-      const type = await this.getPathType(path);
-      if (type === 'file' && extname(path) === '.txt') {
-        resolvedFiles.push(path);
-      } else if (type === 'directory') {
-        const files = await this.findRecordFiles(path);
-        resolvedFiles.push(...files);
-      }
-    }
-
-    return resolvedFiles;
+    return resolvedFilesArrays.flat();
   },
 };
