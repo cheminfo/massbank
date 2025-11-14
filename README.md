@@ -189,15 +189,6 @@ const validator = new MassBankValidator();
 validator.addRule(new CustomRule());
 ```
 
-## Architecture
-
-This library is built following SOLID principles and enterprise design patterns:
-
-- **Single Responsibility** - Each class has one clear purpose
-- **Open/Closed** - Easy to extend with new validation rules
-- **Liskov Substitution** - Interfaces ensure substitutability
-- **Interface Segregation** - Small, focused interfaces
-- **Dependency Inversion** - Depends on abstractions, not concretions
 
 ### Key Components
 
