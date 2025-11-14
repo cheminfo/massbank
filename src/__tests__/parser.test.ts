@@ -21,14 +21,20 @@ describe('RecordParser', () => {
     const record = parseRecord(content);
 
     expect(record.ACCESSION).toBe('MSBNK-test-TST00001');
+
     expect(record.RECORD_TITLE).toBe(
       'Fiscalin C; LC-ESI-ITFT; MS2; CE: 30; R=17500; [M+H]+',
     );
+
     expect(record.DATE).toBe('2017.07.07');
-    expect(record.CH$NAME).toEqual(['Fiscalin C']);
+
+    expect(record.CH$NAME).toStrictEqual(['Fiscalin C']);
+
     expect(record.PK$NUM_PEAK).toBe(3);
-    expect(record.PK$PEAK).toHaveLength(3);
-    expect(record.PK$PEAK![0]?.mz).toBe(185.1073);
+
+    expect(record.PK$PEAK?.length).toBe(3);
+
+    expect(record.PK$PEAK?.[0]?.mz).toBe(185.1073);
   });
 
   it('should parse record with multiple CH$NAME fields', async () => {
@@ -38,7 +44,7 @@ describe('RecordParser', () => {
     );
     const record = parseRecord(content);
 
-    expect(record.CH$NAME).toEqual([
+    expect(record.CH$NAME).toStrictEqual([
       'Disialoganglioside GD1a',
       'another name',
     ]);
@@ -51,9 +57,9 @@ describe('RecordParser', () => {
     );
     const record = parseRecord(content);
 
-    expect(record.PK$ANNOTATION).toBeDefined();
-    expect(record.PK$ANNOTATION!.length).toBeGreaterThan(0);
-    expect(record.PK$ANNOTATION![0]?.mz).toBe(59.013471921284996);
+    expect(record.PK$ANNOTATION?.length).toBeGreaterThan(0);
+
+    expect(record.PK$ANNOTATION?.[0]?.mz).toBe(59.013471921284996);
   });
 
   it('should parse deprecated records', async () => {

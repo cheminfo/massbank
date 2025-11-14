@@ -8,7 +8,7 @@ export interface IRecordParser {
    * Parse a MassBank record string into a Record object
    * @param text - The MassBank record text
    * @returns The parsed Record object
-   * @throws ParseException if parsing fails
+   * @throws {import('./exceptions.js').ParseException} if parsing fails
    */
   parse(text: string): Record;
 }

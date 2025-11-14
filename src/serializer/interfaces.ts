@@ -2,7 +2,7 @@ import type { Record } from '../record.js';
 
 /**
  * Interface for serializing MassBank records
- * Follows Dependency Inversion Principle
+
  */
 export interface IRecordSerializer {
   /**

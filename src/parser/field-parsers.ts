@@ -65,6 +65,8 @@ export class HeaderFieldParser extends BaseFieldParser {
       case 'DEPRECATED':
         record.DEPRECATED = value;
         break;
+      default:
+        break;
     }
   }
 }
@@ -106,6 +108,8 @@ export class CompoundFieldParser extends BaseFieldParser {
         }
         record.CH$LINK.push(value);
         break;
+      default:
+        break;
     }
   }
 }
@@ -138,6 +142,8 @@ export class AnalyticalConditionsFieldParser extends BaseFieldParser {
         }
         record.AC$CHROMATOGRAPHY.push(value);
         break;
+      default:
+        break;
     }
   }
 }
@@ -164,6 +170,8 @@ export class MassSpectrometryFieldParser extends BaseFieldParser {
         }
         record.MS$DATA_PROCESSING.push(value);
         break;
+      default:
+        break;
     }
   }
 }
@@ -183,12 +191,15 @@ export class PeakFieldParser extends BaseFieldParser {
       case 'PK$SPLASH':
         record.PK$SPLASH = value;
         break;
-      case 'PK$NUM_PEAK':
+      case 'PK$NUM_PEAK': {
         const numPeak = Number.parseInt(value, 10);
-        if (isNaN(numPeak)) {
+        if (Number.isNaN(numPeak)) {
           throw new Error(`Invalid PK$NUM_PEAK value: ${value}`);
         }
         record.PK$NUM_PEAK = numPeak;
+        break;
+      }
+      default:
         break;
     }
   }
@@ -218,6 +229,8 @@ export class SpeciesFieldParser extends BaseFieldParser {
         break;
       case 'SP$SAMPLE':
         record.SP$SAMPLE = value;
+        break;
+      default:
         break;
     }
   }

@@ -2,10 +2,7 @@ import { PositionUtils } from '../../parser/index.js';
 import type { Record } from '../../record.js';
 import { serializeRecord } from '../../serializer/index.js';
 import type { ValidationError, ValidationWarning } from '../../types.js';
-import type {
-  IValidationRule,
-  ValidationRuleOptions,
-} from '../interfaces.js';
+import type { IValidationRule, ValidationRuleOptions } from '../interfaces.js';
 
 /**
  * Validates serialization round-trip (parse -> serialize -> compare)
@@ -34,7 +31,10 @@ export class SerializationRule implements IValidationRule {
       );
 
       if (diffPosition !== -1) {
-        const { line, column } = PositionUtils.getLineColumn(normalizedOriginal, diffPosition);
+        const { line, column } = PositionUtils.getLineColumn(
+          normalizedOriginal,
+          diffPosition,
+        );
         errors.push({
           file: filename,
           line,

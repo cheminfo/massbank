@@ -5,8 +5,7 @@
 [![test coverage](https://img.shields.io/codecov/c/github/cheminfo/massbank.svg)](https://codecov.io/gh/cheminfo/massbank)
 [![license](https://img.shields.io/npm/l/massbank.svg)](https://github.com/cheminfo/massbank/blob/main/LICENSE)
 
-A TypeScript/JavaScript library for validating MassBank record files. This library provides a pure TypeScript implementation of MassBank validation, matching the functionality of the official Java Validator tool.
-
+A TypeScript/JavaScript library for validating MassBank record files. This library provides a TypeScript implementation of MassBank validation, matching the functionality of the official Java Validator tool.
 
 ## Installation
 
@@ -188,7 +187,6 @@ class CustomRule implements IValidationRule {
 const validator = new MassBankValidator();
 validator.addRule(new CustomRule());
 ```
-
 
 ### Key Components
 

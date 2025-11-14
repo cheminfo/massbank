@@ -31,6 +31,7 @@ export class PeakTableParser extends BaseTableParser {
     record: Record,
     _headerLine?: string,
   ): number {
+    void _headerLine;
     const peaks: Peak[] = [];
     let i = startIndex;
 
@@ -60,22 +61,32 @@ export class PeakTableParser extends BaseTableParser {
       return null;
     }
 
-    const mz = Number.parseFloat(parts[0]!);
-    const intensity = Number.parseFloat(parts[1]!);
-    const relativeIntensity = parts.length >= 3 ? Number.parseFloat(parts[2]!) : 0;
+    const first = parts[0];
+    const second = parts[1];
+    if (first === undefined || second === undefined) {
+      return null;
+    }
 
-    if (isNaN(mz) || isNaN(intensity)) {
+    const mz = Number.parseFloat(first);
+    const intensity = Number.parseFloat(second);
+    const third = parts.length >= 3 ? parts[2] : undefined;
+    const relativeIntensity =
+      third !== undefined ? Number.parseFloat(third) : 0;
+
+    if (Number.isNaN(mz) || Number.isNaN(intensity)) {
       return null;
     }
 
     return {
       mz,
       intensity,
-      relativeIntensity: isNaN(relativeIntensity) ? 0 : relativeIntensity,
+      relativeIntensity: Number.isNaN(relativeIntensity)
+        ? 0
+        : relativeIntensity,
       _original: {
-        mz: parts[0]!,
-        intensity: parts[1]!,
-        relativeIntensity: parts.length >= 3 ? parts[2]! : '0',
+        mz: first,
+        intensity: second,
+        relativeIntensity: third ?? '0',
       },
     };
   }
@@ -134,8 +145,13 @@ export class AnnotationTableParser extends BaseTableParser {
       return null;
     }
 
-    const mz = Number.parseFloat(parts[0]!);
-    if (isNaN(mz)) {
+    const first = parts[0];
+    if (first === undefined) {
+      return null;
+    }
+
+    const mz = Number.parseFloat(first);
+    if (Number.isNaN(mz)) {
       return null;
     }
 
@@ -150,22 +166,34 @@ export class AnnotationTableParser extends BaseTableParser {
     // If we have 3 parts, it could be: m/z, annotation, exact_mass OR m/z, annotation, error
     // If we have 2 parts, it's: m/z, annotation
     if (parts.length >= 2) {
-      const secondPart = parts[1]!;
+      const secondPart = parts[1];
+      if (secondPart === undefined) {
+        return annotation;
+      }
       // Check if second part could be a number (but might still be annotation text like "precursor")
       // We'll treat it as annotation if there are 4 parts (since format is m/z annotation exact_mass error)
       if (parts.length === 4) {
         // Format: m/z annotation exact_mass error
+        const third = parts[2];
+        const fourth = parts[3];
+        if (third === undefined || fourth === undefined) {
+          return annotation;
+        }
         annotation.annotation = secondPart;
-        annotation.exactMass = Number.parseFloat(parts[2]!);
-        annotation.errorPpm = Number.parseFloat(parts[3]!);
+        annotation.exactMass = Number.parseFloat(third);
+        annotation.errorPpm = Number.parseFloat(fourth);
       } else if (parts.length === 3) {
         // Could be m/z annotation exact_mass or m/z annotation error
         // Check if third part is a number - if so, it's exact_mass
-        const thirdAsNumber = Number.parseFloat(parts[2]!);
-        if (!isNaN(thirdAsNumber)) {
+        const third = parts[2];
+        if (third === undefined) {
+          return annotation;
+        }
+        const thirdAsNumber = Number.parseFloat(third);
+        if (!Number.isNaN(thirdAsNumber)) {
           // Check if second is also a number - if both are numbers, second is exact_mass
           const secondAsNumber = Number.parseFloat(secondPart);
-          if (!isNaN(secondAsNumber)) {
+          if (!Number.isNaN(secondAsNumber)) {
             // Both are numbers: m/z exact_mass error
             annotation.exactMass = secondAsNumber;
             annotation.errorPpm = thirdAsNumber;
@@ -177,7 +205,7 @@ export class AnnotationTableParser extends BaseTableParser {
         } else {
           // Third is not a number: m/z annotation error (unlikely but handle it)
           annotation.annotation = secondPart;
-          annotation.errorPpm = Number.parseFloat(parts[2]!);
+          annotation.errorPpm = Number.parseFloat(third);
         }
       } else {
         // 2 parts: m/z annotation

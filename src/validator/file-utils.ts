@@ -12,11 +12,14 @@ export const FileUtils = {
    */
   async readFile(filePath: string): Promise<string> {
     try {
-      return await readFile(filePath, 'utf-8');
+      return await readFile(filePath, 'utf8');
     } catch (error) {
-      throw new Error(
-        `Error reading file ${filePath}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      const wrappedError = new Error(
+        `Error reading file ${filePath}: ${message}`,
       );
+      (wrappedError as { cause?: unknown }).cause = error;
+      throw wrappedError;
     }
   },
 
@@ -55,9 +58,7 @@ export const FileUtils = {
    * Check if a path is a file or directory
    * @param filePath
    */
-  async getPathType(
-    filePath: string,
-  ): Promise<'file' | 'directory' | 'none'> {
+  async getPathType(filePath: string): Promise<'file' | 'directory' | 'none'> {
     try {
       const stats = await stat(filePath);
       return stats.isDirectory() ? 'directory' : 'file';

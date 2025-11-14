@@ -2,10 +2,7 @@ import path from 'node:path';
 
 import type { Record } from '../../record.js';
 import type { ValidationError, ValidationWarning } from '../../types.js';
-import type {
-  IValidationRule,
-  ValidationRuleOptions,
-} from '../interfaces.js';
+import type { IValidationRule, ValidationRuleOptions } from '../interfaces.js';
 
 /**
  * Validates that ACCESSION matches the filename

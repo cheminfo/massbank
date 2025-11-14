@@ -1,8 +1,8 @@
 import type { FifoLogger } from 'fifo-logger';
 
 import { parseRecord } from './parser/index.js';
-import { RecordValidator } from './validation/index.js';
 import { serializeRecord } from './serializer/index.js';
+import { RecordValidator } from './validation/index.js';
 
 export interface IsValidOptions {
   logger?: FifoLogger;
@@ -60,8 +60,8 @@ export async function isValid(
     // eslint-disable-next-line unicorn/prefer-string-replace-all
     const normalizedOriginal = text.replace(/\r\n?/g, '\n');
     // Normalize trailing newlines for comparison (both should end with \n)
-    const normalizedOriginalTrimmed = `${normalizedOriginal.trimEnd()  }\n`;
-    const serializedTrimmed = `${serialized.trimEnd()  }\n`;
+    const normalizedOriginalTrimmed = `${normalizedOriginal.trimEnd()}\n`;
+    const serializedTrimmed = `${serialized.trimEnd()}\n`;
     if (normalizedOriginalTrimmed !== serializedTrimmed) {
       if (logger) {
         logger.warn('Serialization round-trip failed');

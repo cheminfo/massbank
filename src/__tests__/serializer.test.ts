@@ -21,6 +21,7 @@ describe('RecordSerializer', () => {
     );
     const record = parseRecord(original);
     const serialized = serializeRecord(record);
+    // eslint-disable-next-line unicorn/prefer-string-replace-all
     const normalizedOriginal = original.replace(/\r\n?/g, '\n');
 
     expect(serialized).toBe(normalizedOriginal);
@@ -33,6 +34,7 @@ describe('RecordSerializer', () => {
     );
     const record = parseRecord(original);
     const serialized = serializeRecord(record);
+    // eslint-disable-next-line unicorn/prefer-string-replace-all
     const normalizedOriginal = original.replace(/\r\n?/g, '\n');
 
     expect(serialized).toBe(normalizedOriginal);
@@ -45,6 +47,7 @@ describe('RecordSerializer', () => {
     );
     const record = parseRecord(original);
     const serialized = serializeRecord(record);
+    // eslint-disable-next-line unicorn/prefer-string-replace-all
     const normalizedOriginal = original.replace(/\r\n?/g, '\n');
 
     expect(serialized).toBe(normalizedOriginal);

@@ -64,7 +64,11 @@ export class MassBankValidator {
       resolvedFiles.map(async (filePath) => {
         try {
           const fileContent = await FileUtils.readFile(filePath);
-          const result = await this.validateFile(filePath, fileContent, options);
+          const result = await this.validateFile(
+            filePath,
+            fileContent,
+            options,
+          );
 
           allErrors.push(...result.errors);
           allWarnings.push(...result.warnings);
@@ -82,7 +86,10 @@ export class MassBankValidator {
           // shape and prefer marking the error as 'validation'. Otherwise
           // fallback to 'other'. Keep the logged message and file unchanged.
           const isValidationError =
-            error && typeof error === 'object' && 'type' in error && (error as unknown as { type?: string }).type === 'validation';
+            error &&
+            typeof error === 'object' &&
+            'type' in error &&
+            (error as unknown as { type?: string }).type === 'validation';
 
           allErrors.push({
             file: filePath,

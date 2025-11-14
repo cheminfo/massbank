@@ -13,11 +13,7 @@ export const PositionUtils = {
    * @param column - Column number (1-based)
    * @returns 0-based character position in the original text
    */
-  getPosition(
-    lines: string[],
-    lineIndex: number,
-    column: number,
-  ): number {
+  getPosition(lines: string[], lineIndex: number, column: number): number {
     // Convert 1-based line/column to 0-based for internal calculation
     const zeroBasedLine = lineIndex - 1;
     const zeroBasedColumn = column - 1;

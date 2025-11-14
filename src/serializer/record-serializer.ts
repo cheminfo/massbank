@@ -127,8 +127,7 @@ export class RecordSerializer implements IRecordSerializer {
     if (record.PK$ANNOTATION && record.PK$ANNOTATION.length > 0) {
       // Use original header if available, otherwise use default
       const header =
-        record._PK$ANNOTATION_HEADER ||
-        'm/z annotation exact_mass error(ppm)';
+        record._PK$ANNOTATION_HEADER || 'm/z annotation exact_mass error(ppm)';
       lines.push(`PK$ANNOTATION: ${header}`);
       for (const ann of record.PK$ANNOTATION) {
         // Use original string if available for perfect round-trip
@@ -172,7 +171,7 @@ export class RecordSerializer implements IRecordSerializer {
     lines.push('//');
 
     // Join with newlines and add trailing newline to match original file format
-    return `${lines.join('\n')  }\n`;
+    return `${lines.join('\n')}\n`;
   }
 }
 

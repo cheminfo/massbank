@@ -1,10 +1,7 @@
 import { PositionUtils } from '../../parser/index.js';
 import type { Record } from '../../record.js';
 import type { ValidationError, ValidationWarning } from '../../types.js';
-import type {
-  IValidationRule,
-  ValidationRuleOptions,
-} from '../interfaces.js';
+import type { IValidationRule, ValidationRuleOptions } from '../interfaces.js';
 
 /**
  * Pattern for allowed characters (from Java Validator).
@@ -27,9 +24,12 @@ export class NonStandardCharsRule implements IValidationRule {
     _record: Record,
     _originalText: string,
     _filename: string,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _options: ValidationRuleOptions,
   ): ValidationError[] {
+    void _record;
+    void _originalText;
+    void _filename;
+    void _options;
     return [];
   }
 

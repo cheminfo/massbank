@@ -9,7 +9,11 @@ import {
   PeakFieldParser,
   SpeciesFieldParser,
 } from './field-parsers.js';
-import type { IFieldParser, IRecordParser  , ITableParser } from './interfaces.js';
+import type {
+  IFieldParser,
+  IRecordParser,
+  ITableParser,
+} from './interfaces.js';
 import { PositionUtils } from './position-utils.js';
 import { AnnotationTableParser, PeakTableParser } from './table-parsers.js';
 
