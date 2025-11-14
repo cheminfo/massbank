@@ -3,7 +3,6 @@ import type { ValidationError, ValidationWarning } from '../types.js';
 
 /**
  * Interface for validation rules
- * Follows Strategy Pattern and Dependency Inversion Principle
  */
 export interface IValidationRule {
   /**
