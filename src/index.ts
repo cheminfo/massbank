@@ -8,6 +8,7 @@ export {
   MassBankValidator,
   createValidator,
   validate,
+  validateContent,
 } from './validator/index.js';
 
 // Parser functions
