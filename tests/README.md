@@ -1,8 +1,8 @@
 # Test Files
 
-This directory contains test record files used by the test suite.
+This directory contains test record files used by the test suite, located in the `data` subdirectory.
 
-## Record Files
+## Data Files
 
 - `MSBNK-test-TST00001.txt` - Basic test record with peaks
 - `MSBNK-test-TST00002.txt` - Test record with multiple CH$NAME fields and annotations

@@ -1,5 +1,9 @@
 import type { FifoLogger } from 'fifo-logger';
 
+import { parseRecord } from './parser/index.js';
+import { RecordValidator } from './validation/index.js';
+import { serializeRecord } from './serializer/index.js';
+
 export interface IsValidOptions {
   logger?: FifoLogger;
   /**
@@ -25,13 +29,7 @@ export async function isValid(
   // We'll write to a temporary approach or use a different method
   // For now, we'll create a simple validation that works with text
 
-  // Since validate() expects file paths, we need a different approach
-  // We can parse and validate directly
   try {
-    const { parseRecord } = await import('./parser/index.js');
-    const { RecordValidator } = await import('./validation/index.js');
-    const { serializeRecord } = await import('./serializer/index.js');
-
     // Parse the record
     const record = parseRecord(text);
 

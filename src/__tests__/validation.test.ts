@@ -14,8 +14,8 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Test files are in the tests directory
-const TEST_FILES_DIR = join(__dirname, '../../tests/recordfiles');
+// Test files are in the tests/data directory
+const TEST_FILES_DIR = join(__dirname, '../../tests/data');
 
 describe('AccessionMatchRule', () => {
   it('should validate matching accession and filename', async () => {
