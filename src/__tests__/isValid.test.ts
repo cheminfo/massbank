@@ -3,26 +3,21 @@ import { expect, test } from 'vitest';
 
 import { isValid } from '../isValid.ts';
 
-test('should return 42', () => {
+test('should validate a valid record', async () => {
   const logger = new FifoLogger({ level: 'info' });
+  // Include trailing newline to match file format
+  const validRecord = 'ACCESSION: TEST-001\nRECORD_TITLE: Test Record\n//\n';
 
-  expect(isValid('abc', { logger })).toBe(true);
+  const result = await isValid(validRecord, { logger });
 
-  const logs = logger.getLogs();
-  for (const log of logs) {
-    delete log.uuids;
-    delete log.time;
-  }
+  expect(result).toBe(true);
+});
 
-  expect(logs).toStrictEqual([
-    {
-      id: 1,
-      level: 30,
-      levelLabel: 'info',
-      message: 'you forget a abc',
-      meta: {},
-    },
-  ]);
+test('should reject an invalid record', async () => {
+  const logger = new FifoLogger({ level: 'info' });
+  const invalidRecord = 'INVALID CONTENT';
 
-  expect(logs).toMatchSnapshot();
+  const result = await isValid(invalidRecord, { logger });
+
+  expect(result).toBe(false);
 });
