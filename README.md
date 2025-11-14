@@ -7,14 +7,6 @@
 
 A TypeScript/JavaScript library for validating MassBank record files. This library provides a pure TypeScript implementation of MassBank validation, matching the functionality of the official Java Validator tool.
 
-## Features
-
-- ✅ **Pure TypeScript** - No Java runtime required
-- ✅ **Full Validation** - Matches Java Validator functionality
-- ✅ **Parse & Serialize** - Round-trip validation support
-- ✅ **Enterprise Ready** - Built with SOLID principles and design patterns
-- ✅ **Extensible** - Easy to add custom validation rules
-- ✅ **Type Safe** - Full TypeScript support
 
 ## Installation
 
