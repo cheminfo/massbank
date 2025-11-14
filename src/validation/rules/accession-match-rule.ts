@@ -9,7 +9,7 @@ import type {
 
 /**
  * Validates that ACCESSION matches the filename
- * Single Responsibility: Only validates ACCESSION-filename matching.
+ * Only validates ACCESSION-filename matching.
  * This rule produces blocking validation errors but no warnings.
  */
 export class AccessionMatchRule implements IValidationRule {

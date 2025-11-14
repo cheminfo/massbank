@@ -9,7 +9,7 @@ import type {
 
 /**
  * Validates serialization round-trip (parse -> serialize -> compare)
- * Single Responsibility: Only validates serialization consistency.
+ * Only validates serialization consistency.
  * This rule produces blocking validation errors but no warnings.
  */
 export class SerializationRule implements IValidationRule {

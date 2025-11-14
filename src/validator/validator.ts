@@ -14,8 +14,6 @@ import { FileUtils } from './file-utils.js';
 
 /**
  * Main validator for MassBank records
- * Follows Single Responsibility: Orchestrates validation process
- * Follows Dependency Inversion: Uses interfaces for validation rules
  */
 export class MassBankValidator {
   private readonly recordValidator: RecordValidator;

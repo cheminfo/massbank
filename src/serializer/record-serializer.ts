@@ -4,7 +4,7 @@ import type { IRecordSerializer } from './interfaces.js';
 
 /**
  * Serializes MassBank records to string format
- * Follows Single Responsibility Principle: Only responsible for serialization
+ * Only responsible for serialization
  */
 export class RecordSerializer implements IRecordSerializer {
   /**

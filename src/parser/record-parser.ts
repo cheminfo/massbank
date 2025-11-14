@@ -15,9 +15,9 @@ import { AnnotationTableParser, PeakTableParser } from './table-parsers.js';
 
 /**
  * Main MassBank record parser
- * Follows Single Responsibility Principle: Only responsible for parsing
- * Follows Dependency Inversion Principle: Uses interfaces for field/table parsers
- * Follows Open/Closed Principle: Easy to extend with new parsers
+ * responsible for parsing
+ * Uses interfaces for field/table parsers
+ * Easy to extend with new parsers
  */
 export class RecordParser implements IRecordParser {
   private readonly fieldParsers: IFieldParser[];

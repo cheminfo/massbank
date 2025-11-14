@@ -6,9 +6,7 @@ import {
 } from './rules/index.js';
 
 /**
- * Validator that applies all validation rules
- * Follows Strategy Pattern: Uses IValidationRule interface
- * Follows Open/Closed Principle: Easy to add new rules without modifying this class
+ * Validator that applies all validation rules to a record
  */
 export class RecordValidator {
   private readonly rules: IValidationRule[];

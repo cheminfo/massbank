@@ -2,7 +2,7 @@ import type { ParseError } from '../types.js';
 
 /**
  * Utility functions for position calculations
- * Single Responsibility: Handle position/line/column calculations
+ * Handle position/line/column calculations
  */
 export const PositionUtils = {
   /**

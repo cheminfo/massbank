@@ -4,7 +4,6 @@ import type { IFieldParser } from './interfaces.js';
 
 /**
  * Base class for field parsers
- * Open/Closed Principle: Easy to extend with new field parsers
  */
 abstract class BaseFieldParser implements IFieldParser {
   abstract canParse(key: string): boolean;

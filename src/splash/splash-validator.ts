@@ -4,10 +4,9 @@ import type { ISplashValidator } from './interfaces.js';
 
 /**
  * SPLASH validator using API
- * Single Responsibility: Only handles SPLASH validation
+ * handles SPLASH validation
  *
  * Note: SPLASH calculation algorithm is complex. For now, we'll use the API.
- * In the future, this could be extended to calculate locally as well.
  */
 export class SplashValidator implements ISplashValidator {
   private readonly apiUrl: string;

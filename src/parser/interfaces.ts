@@ -2,7 +2,6 @@ import type { Record } from '../record.js';
 
 /**
  * Interface for parsing MassBank records
- * Follows Dependency Inversion Principle
  */
 export interface IRecordParser {
   /**

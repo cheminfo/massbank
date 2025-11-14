@@ -19,7 +19,7 @@ const NON_STANDARD_CHARS_PATTERN =
 
 /**
  * Validates non-standard characters in the record
- * Single Responsibility: Only validates character set.
+ * Only validates character set.
  * This rule is warning-only and never produces blocking validation errors.
  */
 export class NonStandardCharsRule implements IValidationRule {

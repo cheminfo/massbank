@@ -2,7 +2,6 @@ import type { Record } from '../record.js';
 
 /**
  * Interface for SPLASH calculation and validation
- * Follows Dependency Inversion Principle
  */
 export interface ISplashValidator {
   /**
