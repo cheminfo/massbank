@@ -2,7 +2,7 @@ import type { Record } from '../record.js';
 
 /**
  * Interface for serializing MassBank records
-
+ *
  */
 export interface IRecordSerializer {
   /**

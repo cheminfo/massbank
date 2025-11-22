@@ -4,7 +4,6 @@ export default defineConfig({
   test: {
     coverage: {
       include: ['src/**'],
-      exclude: ['src/**/*.ignore', 'src/**/.npmignore', 'src/**/.DS_Store'],
       provider: 'v8',
     },
     setupFiles: [

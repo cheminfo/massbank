@@ -5,7 +5,7 @@
 [![test coverage](https://img.shields.io/codecov/c/github/cheminfo/massbank.svg)](https://codecov.io/gh/cheminfo/massbank)
 [![license](https://img.shields.io/npm/l/massbank.svg)](https://github.com/cheminfo/massbank/blob/main/LICENSE)
 
-A TypeScript/JavaScript library for validating MassBank record files. This library provides a TypeScript implementation of MassBank validation, matching the functionality of the official Java Validator tool.
+A TypeScript/JavaScript library for validating MassBank record files. This library provides validation for MassBank format 2.6.0, ensuring compliance with MassBank standards for automated submission to the MassBank-data repository.
 
 ## Installation
 
@@ -15,35 +15,36 @@ npm install massbank
 
 ## Usage
 
-### Basic Validation
+### Basic File Validation
 
 ```typescript
 import { validate } from 'massbank';
 
 // Validate a single file
-const result = await validate('path/to/record.txt');
+const result = await validate('path/to/MSBNK-test-TST00001.txt');
 
 if (result.success) {
   console.log('Validation passed!');
-  console.log('Accessions:', result.accessions);
+  console.log('Accession:', result.accessions[0]);
 } else {
-  console.error('Validation failed:');
+  console.error('❌ Validation failed:');
   result.errors.forEach((error) => {
-    console.error(`  ${error.file}: ${error.message}`);
+    console.error(`  Line ${error.line}: ${error.message}`);
   });
 }
 ```
 
-### Validate Multiple Files or Directories
+### In-Memory Validation
 
 ```typescript
-import { validate } from 'massbank';
+import { validateContent } from 'massbank';
 
-// Validate multiple files
-const result = await validate(['record1.txt', 'record2.txt', 'record3.txt']);
+// Validate record text without file I/O
+const recordText = `ACCESSION: MSBNK-test-TST00001
+RECORD_TITLE: Test Record
+//`;
 
-// Validate a directory (recursively finds all .txt files)
-const result = await validate('path/to/records/');
+const result = await validateContent(recordText, 'MSBNK-test-TST00001.txt');
 ```
 
 ### With Options
@@ -60,59 +61,25 @@ const result = await validate('record.txt', {
 });
 ```
 
-### Parse Records
-
-```typescript
-import { parseRecord } from 'massbank';
-
-const recordText = `ACCESSION: MSBNK-test-00001
-RECORD_TITLE: Test Record
-//`;
-
-const record = parseRecord(recordText);
-console.log(record.ACCESSION); // "MSBNK-test-00001"
-```
-
-### Serialize Records
-
-```typescript
-import { parseRecord, serializeRecord } from 'massbank';
-
-const record = parseRecord(recordText);
-const serialized = serializeRecord(record);
-```
-
-### Simple Boolean Check
-
-```typescript
-import { isValid } from 'massbank';
-
-const isValidRecord = await isValid(recordText);
-if (isValidRecord) {
-  console.log('Record is valid!');
-}
-```
-
 ## Validation Rules
 
 The validator performs the following checks:
 
-1. **Parse Validation** - Ensures the record can be parsed correctly
-2. **ACCESSION Matching** - Validates that ACCESSION matches the filename
-3. **Non-Standard Characters** - Warns on non-standard ASCII characters
-4. **Serialization Round-Trip** - Ensures parse → serialize → compare matches exactly
-5. **Duplicate Detection** - Checks for duplicate accessions across all files
-6. **Legacy Mode** - Less strict validation for legacy records
+1. **Parse Validation** - Ensures the record can be parsed correctly according to MassBank format 2.6.0
+2. **ACCESSION Matching** - Validates that ACCESSION field matches the filename (CRITICAL for MassBank-data repository)
+   - Example: File `MSBNK-test-TST00001.txt` must contain `ACCESSION: MSBNK-test-TST00001`
+3. **Non-Standard Characters** - Warns about non-standard ASCII characters (non-blocking)
+4. **Serialization Round-Trip** - Ensures parse → serialize → compare matches exactly (guarantees no data loss)
 
 ## API Reference
 
-### `validate(paths, options?)`
+### `validate(filePath, options?)`
 
-Main validation function.
+Validate a single MassBank record file.
 
 **Parameters:**
 
-- `paths: string | string[]` - File path(s) or directory path(s) to validate
+- `filePath: string` - Path to the .txt file to validate
 - `options?: ValidationOptions` - Optional validation options
 
 **Returns:** `Promise<ValidationResult>`
@@ -121,85 +88,41 @@ Main validation function.
 
 ```typescript
 interface ValidationResult {
-  success: boolean;
-  errors: ValidationError[];
-  warnings: ValidationWarning[];
-  accessions: string[];
-  filesProcessed: number;
+  success: boolean; // true if no errors
+  errors: ValidationError[]; // Array of validation errors
+  warnings: ValidationWarning[]; // Array of warnings (non-blocking)
+  accessions: string[]; // Extracted ACCESSION values
+  filesProcessed: number; // Number of files processed (always 1)
 }
 ```
 
-### `parseRecord(text)`
+### `validateContent(text, filename, options?)`
 
-Parse a MassBank record string into a Record object.
+Validate in-memory MassBank record content (no file I/O).
 
 **Parameters:**
 
 - `text: string` - The MassBank record text
+- `filename: string` - Logical filename for error reporting (e.g., 'user-upload.txt')
+- `options?: ValidationOptions` - Optional validation options
 
-**Returns:** `Record`
+**Returns:** `Promise<ValidationResult>`
 
-**Throws:** `ParseException` if parsing fails
+## MassBank Format 2.6.0 Compliance
 
-### `serializeRecord(record)`
+This library enforces MassBank format 2.6.0 standards, including:
 
-Serialize a Record object back to MassBank record string format.
-
-**Parameters:**
-
-- `record: Record` - The record to serialize
-
-**Returns:** `string`
-
-### `isValid(text, options?)`
-
-Simple boolean check for record validity.
-
-**Parameters:**
-
-- `text: string` - The MassBank record text
-- `options?: IsValidOptions` - Optional validation options
-
-**Returns:** `Promise<boolean>`
-
-## Extending Validation
-
-You can add custom validation rules:
-
-```typescript
-import { MassBankValidator, IValidationRule } from 'massbank';
-import type { Record, ValidationError, ValidationWarning } from 'massbank';
-
-class CustomRule implements IValidationRule {
-  validate(record: Record, originalText: string, filename: string, options) {
-    const errors: ValidationError[] = [];
-    // Your validation logic
-    return errors;
-  }
-
-  getWarnings(record: Record, originalText: string, filename: string, options) {
-    const warnings: ValidationWarning[] = [];
-    // Your warning logic
-    return warnings;
-  }
-}
-
-const validator = new MassBankValidator();
-validator.addRule(new CustomRule());
-```
-
-### Key Components
-
-- **Parser** - Parses MassBank record format with extensible field parsers
-- **Serializer** - Serializes records back to text format
-- **Validation Rules** - Strategy pattern for validation rules
-- **Validator** - Orchestrates validation process
-- **SPLASH** - SPLASH validation support (via API)
+- **ACCESSION format:** `MSBNK-[ContributorID]-[RecordID]`
+  - Contributor ID: up to 32 characters (letters, digits, underscore)
+  - Record ID: up to 64 characters (capital letters, digits, underscore)
+- **Filename matching:** File must be named `{ACCESSION}.txt`
+- **Required fields:** ACCESSION, RECORD_TITLE, DATE, AUTHORS, LICENSE, and more
+- **SPLASH validation:** Optional spectral hash validation via API
 
 ## Requirements
 
-- Node.js 18+ (for native fetch support, or use a fetch polyfill)
-- No external dependencies beyond Node.js built-ins
+- Node.js 18+ (for native fetch support in SPLASH validation)
+- No external runtime dependencies (only optional `fifo-logger`)
 
 ## License
 

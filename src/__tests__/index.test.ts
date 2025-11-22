@@ -1,14 +1,18 @@
 import { expect, test } from 'vitest';
 
-import { parseRecord, validate } from '../index.ts';
+import { validate, validateContent } from '../index.ts';
+import { parseRecord } from '../parser/index.js';
 
-test('should export parseRecord', () => {
+test('should parse records internally', () => {
   const record = parseRecord('ACCESSION: TEST\n//');
 
   expect(record.ACCESSION).toBe('TEST');
 });
 
-test('should export validate function', async () => {
-  // This is a basic smoke test
+test('should export validate function', () => {
   expect(typeof validate).toBe('function');
+});
+
+test('should export validateContent function', () => {
+  expect(typeof validateContent).toBe('function');
 });
