@@ -68,6 +68,7 @@ export class UnrecognizedFieldRule implements IValidationRule {
     _record: Record,
     originalText: string,
     filename: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _options?: ValidationRuleOptions,
   ): ValidationWarning[] {
     const warnings: ValidationWarning[] = [];

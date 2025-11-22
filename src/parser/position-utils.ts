@@ -32,13 +32,16 @@ export const PositionUtils = {
 
       const lineContent = match.groups?.content ?? '';
       const newlineSeparator = match.groups?.newline ?? '';
-      
+
       // Move offset past the line content and its newline separator
       offset += lineContent.length + newlineSeparator.length;
       currentLine++;
 
       // If we've processed all text, break to avoid infinite loop
-      if (newlineSeparator === '' || match.index + match[0].length >= text.length) {
+      if (
+        newlineSeparator === '' ||
+        match.index + match[0].length >= text.length
+      ) {
         break;
       }
     }
@@ -113,7 +116,10 @@ export const PositionUtils = {
       lineNumber++;
 
       // If we've processed all text, break to avoid infinite loop
-      if (newlineSeparator === '' || match.index + match[0].length >= text.length) {
+      if (
+        newlineSeparator === '' ||
+        match.index + match[0].length >= text.length
+      ) {
         break;
       }
     }
