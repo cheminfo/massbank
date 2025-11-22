@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 
-import { validate, validateContent } from '../index.ts';
+import { validate, validateContent } from '../index.js';
 import { parseRecord } from '../parser/index.js';
 
 test('should parse records internally', () => {

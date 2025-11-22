@@ -62,7 +62,6 @@ describe('RecordSerializer', () => {
     const serialized = serializeRecord(record);
     const reParsed = parseRecord(serialized);
 
-    expect(reParsed.ACCESSION).toBe(record.ACCESSION);
-    expect(reParsed.PK$PEAK).toStrictEqual(record.PK$PEAK);
+    expect(reParsed).toStrictEqual(record);
   });
 });

@@ -68,8 +68,9 @@ The validator performs the following checks:
 1. **Parse Validation** - Ensures the record can be parsed correctly according to MassBank format 2.6.0
 2. **ACCESSION Matching** - Validates that ACCESSION field matches the filename (CRITICAL for MassBank-data repository)
    - Example: File `MSBNK-test-TST00001.txt` must contain `ACCESSION: MSBNK-test-TST00001`
-3. **Non-Standard Characters** - Warns about non-standard ASCII characters (non-blocking)
-4. **Serialization Round-Trip** - Ensures parse → serialize → compare matches exactly (guarantees no data loss)
+3. **Unrecognized Fields** - Warns about unrecognized field names (helps catch typos like `RECRD_TITLE` instead of `RECORD_TITLE`)
+4. **Non-Standard Characters** - Warns about non-standard ASCII characters (non-blocking)
+5. **Serialization Round-Trip** - Ensures parse → serialize → compare matches exactly (guarantees no data loss)
 
 ## API Reference
 

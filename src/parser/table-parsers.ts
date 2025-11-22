@@ -203,9 +203,8 @@ export class AnnotationTableParser extends BaseTableParser {
             annotation.exactMass = thirdAsNumber;
           }
         } else {
-          // Third is not a number: m/z annotation error (unlikely but handle it)
+          // Third is not a number, treat second as annotation text
           annotation.annotation = secondPart;
-          annotation.errorPpm = Number.parseFloat(third);
         }
       } else {
         // 2 parts: m/z annotation

@@ -3,6 +3,7 @@ import {
   AccessionMatchRule,
   NonStandardCharsRule,
   SerializationRule,
+  UnrecognizedFieldRule,
 } from './rules/index.js';
 
 /**
@@ -17,6 +18,7 @@ export class RecordValidator {
       new AccessionMatchRule(),
       new NonStandardCharsRule(),
       new SerializationRule(),
+      new UnrecognizedFieldRule(),
     ];
   }
 

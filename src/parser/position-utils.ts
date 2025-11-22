@@ -8,26 +8,43 @@ export const PositionUtils = {
   /**
    * Get character position from line and column (both 1-based).
    * Converts 1-based line/column to a 0-based character offset in the text.
-   * @param lines - Array of lines in the text
+   * @param text - The full text being parsed (used to determine actual newline lengths)
    * @param lineIndex - Line number (1-based)
    * @param column - Column number (1-based)
    * @returns 0-based character position in the original text
    */
-  getPosition(lines: string[], lineIndex: number, column: number): number {
+  getPosition(text: string, lineIndex: number, column: number): number {
     // Convert 1-based line/column to 0-based for internal calculation
     const zeroBasedLine = lineIndex - 1;
     const zeroBasedColumn = column - 1;
 
-    let position = 0;
-    // Sum lengths of all lines before the target line
-    for (let i = 0; i < zeroBasedLine; i++) {
-      const line = lines[i] ?? '';
-      // Only non-last lines have a trailing newline
-      position += line.length + (i < lines.length - 1 ? 1 : 0);
+    // Match lines with their actual newline separators to get correct lengths
+    const lineRegex = /^(?<content>.*?)(?<newline>\r\n|\r|\n|$)/gm;
+    let match: RegExpExecArray | null;
+    let offset = 0;
+    let currentLine = 0;
+
+    while ((match = lineRegex.exec(text)) !== null) {
+      if (currentLine === zeroBasedLine) {
+        // Found the target line, add the column offset
+        return offset + zeroBasedColumn;
+      }
+
+      const lineContent = match.groups?.content ?? '';
+      const newlineSeparator = match.groups?.newline ?? '';
+      
+      // Move offset past the line content and its newline separator
+      offset += lineContent.length + newlineSeparator.length;
+      currentLine++;
+
+      // If we've processed all text, break to avoid infinite loop
+      if (newlineSeparator === '' || match.index + match[0].length >= text.length) {
+        break;
+      }
     }
-    // Add the column offset within the target line
-    position += zeroBasedColumn;
-    return position;
+
+    // If we didn't find the line, return the current offset plus column
+    return offset + zeroBasedColumn;
   },
 
   /**
@@ -73,24 +90,35 @@ export const PositionUtils = {
     // Clamp position to valid range [0, text.length]
     const clampedPosition = Math.max(0, Math.min(position, text.length));
 
-    const lines = text.split(/\r?\n/);
+    // Match lines with their actual newline separators to get correct lengths
+    // This regex captures line content followed by the newline (CRLF, LF, or CR)
+    const lineRegex = /^(?<content>.*?)(?<newline>\r\n|\r|\n|$)/gm;
+    let match: RegExpExecArray | null;
     let offset = 0;
+    let lineNumber = 1;
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i] ?? '';
-      // Only non-last lines have a trailing newline
-      const lineLength = line.length + (i < lines.length - 1 ? 1 : 0);
+    while ((match = lineRegex.exec(text)) !== null) {
+      const lineContent = match.groups?.content ?? '';
+      const newlineSeparator = match.groups?.newline ?? '';
+      const lineEndOffset = offset + lineContent.length;
 
-      if (offset + lineLength > clampedPosition || i === lines.length - 1) {
-        // Found the line containing this position
-        const lineNumber = i + 1; // 1-based
+      // Check if the position is within this line's content
+      if (clampedPosition <= lineEndOffset) {
         const column = clampedPosition - offset + 1; // 1-based
         return { line: lineNumber, column };
       }
-      offset += lineLength;
+
+      // Move offset past the line content and its newline separator
+      offset = lineEndOffset + newlineSeparator.length;
+      lineNumber++;
+
+      // If we've processed all text, break to avoid infinite loop
+      if (newlineSeparator === '' || match.index + match[0].length >= text.length) {
+        break;
+      }
     }
 
-    // Fallback for empty text: return line 1, column 1
+    // Fallback for empty text or edge cases: return line 1, column 1
     return { line: 1, column: 1 };
   },
 };
