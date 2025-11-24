@@ -1,7 +1,15 @@
 /**
- * My module
- * @returns A very important number
+ * MassBank validation library
+ * Main entry point for the package
  */
-export function myModule(): number {
-  return 42;
-}
+
+// Validation functions
+export { validate, validateContent } from './validator/index.js';
+
+// Types for reading validation results
+export type {
+  ValidationError,
+  ValidationOptions,
+  ValidationResult,
+  ValidationWarning,
+} from './types.js';

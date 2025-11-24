@@ -118,3 +118,8 @@ dist
 .DS_Store
 
 lib
+
+# Sample files for manual testing (not committed)
+samples/
+
+validation-samples.ts
