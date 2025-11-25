@@ -35,12 +35,29 @@ export class SerializationRule implements IValidationRule {
           normalizedOriginal,
           diffPosition,
         );
+
+        // Get context around the difference for better error message
+        const originalLine = normalizedOriginal.split('\n')[line - 1] || '';
+        const serializedLine = serialized.split('\n')[line - 1] || '';
+
+        let message = 'File formatting issue detected (round-trip validation failed).';
+
+        // Provide specific guidance based on common issues
+        if (originalLine !== serializedLine) {
+          if (originalLine.includes('  ') && serializedLine.includes(' ')) {
+            message += ' Check for extra spaces or inconsistent spacing.';
+          } else if (!serializedLine.trim()) {
+            message += ' This line may contain unrecognized fields that were ignored during parsing.';
+          } else {
+            message += ` Expected: "${serializedLine.trim()}" but found: "${originalLine.trim()}"`;
+          }
+        }
+
         errors.push({
           file: filename,
           line,
           column,
-          message:
-            'File content differs from generated record string. This might be a code problem. Please Report!',
+          message,
           type: 'serialization',
         });
       }
