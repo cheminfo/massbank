@@ -53,12 +53,31 @@ export class NonStandardCharsRule implements IValidationRule {
         originalText,
         match.index,
       );
+      const char = match[0] || '';
+      const codePoint = char.codePointAt(0);
+      const hex = codePoint
+        ? `U+${codePoint.toString(16).toUpperCase().padStart(4, '0')}`
+        : '';
+
+      // Common replacements
+      const suggestions = new Map<string, string>([
+        ['\u2014', 'Replace em-dash with hyphen'],
+        ['\u201C', 'Replace fancy opening quote with straight quote (")'],
+        ['\u201D', 'Replace fancy closing quote with straight quote (")'],
+        ['\u2018', "Replace fancy opening apostrophe with straight quote (')"],
+        ['\u2019', "Replace fancy closing apostrophe with straight quote (')"],
+        ['\u2022', 'Replace bullet point with hyphen (-)'],
+        ['\u00AE', 'Replace registered symbol with (R)'],
+      ]);
+
+      const suggestion =
+        suggestions.get(char) || 'Replace with standard ASCII character';
+
       warnings.push({
         file: filename,
         line,
         column,
-        message:
-          'Non standard ASCII character found. This might be an error. Please check carefully.',
+        message: `Non-standard character '${char}' (${hex}) found. ${suggestion}`,
       });
     }
 

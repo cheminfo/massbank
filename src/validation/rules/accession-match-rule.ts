@@ -24,7 +24,7 @@ export class AccessionMatchRule implements IValidationRule {
       errors.push({
         file: filename,
         line: 1,
-        message: `ACCESSION ${record.ACCESSION} does not match filename '${filename}'`,
+        message: `ACCESSION mismatch: File is named '${basename}.txt' but ACCESSION field is '${record.ACCESSION}'. Fix: Either rename the file to '${record.ACCESSION}.txt' or change ACCESSION field to '${basename}'.`,
         type: 'validation',
       });
     }

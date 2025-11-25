@@ -89,14 +89,84 @@ export class UnrecognizedFieldRule implements IValidationRule {
 
       // Check if this is an unrecognized field
       if (!this.recognizedFields.has(key)) {
+        // Suggest similar field names for common typos
+        // Normalize to uppercase for comparison to catch case errors
+        const suggestion = this.findSimilarField(key.toUpperCase());
+        let message = `Unrecognized field '${key}'. Not a valid MassBank 2.6.0 field.`;
+
+        if (suggestion) {
+          message += ` Did you mean '${suggestion}'?`;
+        } else {
+          message +=
+            ' Remove this line or check the MassBank format specification.';
+        }
+
         warnings.push({
           file: filename,
           line: i + 1,
-          message: `Unrecognized field '${key}'. This may be a typo or an unsupported field.`,
+          message,
         });
       }
     }
 
     return warnings;
+  }
+
+  /**
+   * Find a similar field name for typo suggestions
+   * Uses simple Levenshtein distance for similarity
+   */
+  private findSimilarField(input: string): string | null {
+    let bestMatch: string | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    for (const field of this.recognizedFields) {
+      const distance = this.levenshteinDistance(input, field);
+      // Only suggest if very similar (distance <= 2)
+      if (distance <= 2 && distance < bestDistance) {
+        bestDistance = distance;
+        bestMatch = field;
+      }
+    }
+
+    return bestMatch;
+  }
+
+  /**
+   * Calculate Levenshtein distance between two strings
+   */
+  private levenshteinDistance(a: string, b: string): number {
+    const matrix: number[][] = [];
+
+    for (let i = 0; i <= b.length; i++) {
+      matrix[i] = [i];
+    }
+
+    const firstRow = matrix[0];
+    if (firstRow) {
+      for (let j = 0; j <= a.length; j++) {
+        firstRow[j] = j;
+      }
+    }
+
+    for (let i = 1; i <= b.length; i++) {
+      const currentRow = matrix[i];
+      const prevRow = matrix[i - 1];
+      if (!currentRow || !prevRow) continue;
+
+      for (let j = 1; j <= a.length; j++) {
+        if (b.charAt(i - 1) === a.charAt(j - 1)) {
+          currentRow[j] = prevRow[j - 1] ?? 0;
+        } else {
+          const substitution = (prevRow[j - 1] ?? 0) + 1;
+          const insertion = (currentRow[j - 1] ?? 0) + 1;
+          const deletion = (prevRow[j] ?? 0) + 1;
+          currentRow[j] = Math.min(substitution, insertion, deletion);
+        }
+      }
+    }
+
+    const lastRow = matrix[b.length];
+    return lastRow?.[a.length] ?? Number.POSITIVE_INFINITY;
   }
 }
