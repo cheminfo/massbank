@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/cheminfo/massbank/compare/v0.1.0...v0.2.0) (2025-11-25)
+
+
+### Features
+
+* validator ([#6](https://github.com/cheminfo/massbank/issues/6)) ([c5d7a1e](https://github.com/cheminfo/massbank/commit/c5d7a1e237a749eac932906aa2d8178287b1f53c))
+
 ## [0.1.0](https://github.com/cheminfo/massbank/compare/v0.0.2...v0.1.0) (2025-11-24)
 
 
