@@ -122,4 +122,6 @@ lib
 # Sample files for manual testing (not committed)
 samples/
 
-validation-samples.ts
+validate-samples.ts
+
+massbank.code-workspace
