@@ -167,6 +167,6 @@ export class UnrecognizedFieldRule implements IValidationRule {
     }
 
     const lastRow = matrix[b.length];
-    return lastRow?.[a.length] ?? 0;
+    return lastRow?.[a.length] ?? Number.POSITIVE_INFINITY;
   }
 }

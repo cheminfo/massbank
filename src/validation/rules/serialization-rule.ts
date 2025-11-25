@@ -51,7 +51,6 @@ export class SerializationRule implements IValidationRule {
             message +=
               ' This line may contain unrecognized fields that were ignored during parsing.';
           } else {
-            message += ` Expected: "${serializedLine}" but found: "${originalLine}"`;
             const expectedPreview =
               serializedLine.length > 80
                 ? `${serializedLine.slice(0, 77)}...`
