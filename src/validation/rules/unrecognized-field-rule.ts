@@ -90,13 +90,15 @@ export class UnrecognizedFieldRule implements IValidationRule {
       // Check if this is an unrecognized field
       if (!this.recognizedFields.has(key)) {
         // Suggest similar field names for common typos
-        const suggestion = this.findSimilarField(key);
+        // Normalize to uppercase for comparison to catch case errors
+        const suggestion = this.findSimilarField(key.toUpperCase());
         let message = `Unrecognized field '${key}'. Not a valid MassBank 2.6.0 field.`;
 
         if (suggestion) {
           message += ` Did you mean '${suggestion}'?`;
         } else {
-          message += ' Remove this line or check the MassBank format specification.';
+          message +=
+            ' Remove this line or check the MassBank format specification.';
         }
 
         warnings.push({
@@ -140,24 +142,31 @@ export class UnrecognizedFieldRule implements IValidationRule {
       matrix[i] = [i];
     }
 
-    for (let j = 0; j <= a.length; j++) {
-      matrix[0]![j] = j;
+    const firstRow = matrix[0];
+    if (firstRow) {
+      for (let j = 0; j <= a.length; j++) {
+        firstRow[j] = j;
+      }
     }
 
     for (let i = 1; i <= b.length; i++) {
+      const currentRow = matrix[i];
+      const prevRow = matrix[i - 1];
+      if (!currentRow || !prevRow) continue;
+
       for (let j = 1; j <= a.length; j++) {
         if (b.charAt(i - 1) === a.charAt(j - 1)) {
-          matrix[i]![j] = matrix[i - 1]![j - 1]!;
+          currentRow[j] = prevRow[j - 1] ?? 0;
         } else {
-          matrix[i]![j] = Math.min(
-            matrix[i - 1]![j - 1]! + 1, // substitution
-            matrix[i]![j - 1]! + 1,     // insertion
-            matrix[i - 1]![j]! + 1      // deletion
-          );
+          const substitution = (prevRow[j - 1] ?? 0) + 1;
+          const insertion = (currentRow[j - 1] ?? 0) + 1;
+          const deletion = (prevRow[j] ?? 0) + 1;
+          currentRow[j] = Math.min(substitution, insertion, deletion);
         }
       }
     }
 
-    return matrix[b.length]![a.length]!;
+    const lastRow = matrix[b.length];
+    return lastRow?.[a.length] ?? 0;
   }
 }

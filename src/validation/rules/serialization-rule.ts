@@ -40,16 +40,27 @@ export class SerializationRule implements IValidationRule {
         const originalLine = normalizedOriginal.split('\n')[line - 1] || '';
         const serializedLine = serialized.split('\n')[line - 1] || '';
 
-        let message = 'File formatting issue detected (round-trip validation failed).';
+        let message =
+          'File formatting issue detected (round-trip validation failed).';
 
         // Provide specific guidance based on common issues
         if (originalLine !== serializedLine) {
           if (originalLine.includes('  ') && serializedLine.includes(' ')) {
             message += ' Check for extra spaces or inconsistent spacing.';
           } else if (!serializedLine.trim()) {
-            message += ' This line may contain unrecognized fields that were ignored during parsing.';
+            message +=
+              ' This line may contain unrecognized fields that were ignored during parsing.';
           } else {
-            message += ` Expected: "${serializedLine.trim()}" but found: "${originalLine.trim()}"`;
+            message += ` Expected: "${serializedLine}" but found: "${originalLine}"`;
+            const expectedPreview =
+              serializedLine.length > 80
+                ? `${serializedLine.slice(0, 77)}...`
+                : serializedLine;
+            const foundPreview =
+              originalLine.length > 80
+                ? `${originalLine.slice(0, 77)}...`
+                : originalLine;
+            message += ` Expected (${serializedLine.length} chars): "${expectedPreview}" but found (${originalLine.length} chars): "${foundPreview}"`;
           }
         }
 

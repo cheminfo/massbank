@@ -55,23 +55,23 @@ export class NonStandardCharsRule implements IValidationRule {
       );
       const char = match[0] || '';
       const codePoint = char.codePointAt(0);
-      const hex = codePoint ? `U+${codePoint.toString(16).toUpperCase().padStart(4, '0')}` : '';
+      const hex = codePoint
+        ? `U+${codePoint.toString(16).toUpperCase().padStart(4, '0')}`
+        : '';
 
       // Common replacements
       const suggestions = new Map<string, string>([
         ['\u2014', 'Replace em-dash with hyphen'],
-        ['\u2013', 'Replace en-dash with hyphen'],
         ['\u201C', 'Replace fancy opening quote with straight quote (")'],
         ['\u201D', 'Replace fancy closing quote with straight quote (")'],
         ['\u2018', "Replace fancy opening apostrophe with straight quote (')"],
         ['\u2019', "Replace fancy closing apostrophe with straight quote (')"],
         ['\u2022', 'Replace bullet point with hyphen (-)'],
-        ['\u00A9', 'Replace copyright symbol with (C)'],
         ['\u00AE', 'Replace registered symbol with (R)'],
-        ['\u00B0', 'Keep degree symbol or write "deg"'],
       ]);
 
-      const suggestion = suggestions.get(char) || 'Replace with standard ASCII character';
+      const suggestion =
+        suggestions.get(char) || 'Replace with standard ASCII character';
 
       warnings.push({
         file: filename,
