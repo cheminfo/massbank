@@ -1,8 +1,25 @@
-import path from 'node:path';
-
 import type { Record } from '../../record.js';
 import type { ValidationError, ValidationWarning } from '../../types.js';
 import type { IValidationRule, ValidationRuleOptions } from '../interfaces.js';
+
+/**
+ * Get the filename from a path (browser-compatible alternative to path.basename)
+ */
+function getBasename(filepath: string): string {
+  const lastSlash = Math.max(
+    filepath.lastIndexOf('/'),
+    filepath.lastIndexOf('\\'),
+  );
+  return lastSlash >= 0 ? filepath.slice(lastSlash + 1) : filepath;
+}
+
+/**
+ * Remove the extension from a filename (browser-compatible alternative to path.extname)
+ */
+function removeExtension(filename: string): string {
+  const lastDot = filename.lastIndexOf('.');
+  return lastDot > 0 ? filename.slice(0, lastDot) : filename;
+}
 
 /**
  * Validates that ACCESSION matches the filename
@@ -18,7 +35,7 @@ export class AccessionMatchRule implements IValidationRule {
     _options: ValidationRuleOptions,
   ): ValidationError[] {
     const errors: ValidationError[] = [];
-    const basename = path.basename(filename, path.extname(filename));
+    const basename = removeExtension(getBasename(filename));
 
     if (record.ACCESSION !== basename) {
       errors.push({

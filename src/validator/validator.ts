@@ -7,8 +7,6 @@ import type {
 } from '../types.js';
 import { RecordValidator } from '../validation/index.js';
 
-import { FileUtils } from './file-utils.js';
-
 /**
  * Validate a single MassBank record file
  * @param filePath - Path to the .txt file
@@ -27,6 +25,9 @@ export async function validate(
   if (options.logger) {
     options.logger.info(`Validating file: ${filePath}`);
   }
+
+  // Dynamic import to avoid pulling node:fs/promises into browser bundles
+  const { FileUtils } = await import('./file-utils.js');
 
   // Read file
   let fileContent: string;
