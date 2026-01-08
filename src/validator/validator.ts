@@ -27,12 +27,12 @@ export async function validate(
   }
 
   // Dynamic import to avoid pulling node:fs/promises into browser bundles
-  const { FileUtils } = await import('./file-utils.js');
+  const { readFile } = await import('node:fs/promises');
 
   // Read file
   let fileContent: string;
   try {
-    fileContent = await FileUtils.readFile(filePath);
+    fileContent = await readFile(filePath, 'utf8');
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return {
