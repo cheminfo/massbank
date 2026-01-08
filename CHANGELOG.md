@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.0](https://github.com/cheminfo/massbank/compare/v0.1.0...v0.2.0) (2026-01-08)
+
+
+### Features
+
+* add browser compatibility for validateContent ([352c6c0](https://github.com/cheminfo/massbank/commit/352c6c0cce53835b97aac5d64416d8638ea1dc3e))
+* add browser compatibility for validateContent ([1fe132e](https://github.com/cheminfo/massbank/commit/1fe132e109b2518ba6601c541070a3928e9aeaf9))
+* validator ([#6](https://github.com/cheminfo/massbank/issues/6)) ([c5d7a1e](https://github.com/cheminfo/massbank/commit/c5d7a1e237a749eac932906aa2d8178287b1f53c))
+
 ## [0.1.0](https://github.com/cheminfo/massbank/compare/v0.0.2...v0.1.0) (2025-11-24)
 
 
