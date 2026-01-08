@@ -8,7 +8,8 @@ import type {
 import { RecordValidator } from '../validation/index.js';
 
 /**
- * Validate a single MassBank record file
+ * Validate a single MassBank record file (Node.js only)
+ * For browser usage, use validateContent() instead.
  * @param filePath - Path to the .txt file
  * @param options - Validation options (legacy mode, logger)
  * @returns ValidationResult with errors, warnings, and accession
@@ -27,12 +28,12 @@ export async function validate(
   }
 
   // Dynamic import to avoid pulling node:fs/promises into browser bundles
-  const { FileUtils } = await import('./file-utils.js');
+  const { readFile } = await import('node:fs/promises');
 
   // Read file
   let fileContent: string;
   try {
-    fileContent = await FileUtils.readFile(filePath);
+    fileContent = await readFile(filePath, 'utf8');
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return {
@@ -116,9 +117,9 @@ export async function validate(
 }
 
 /**
- * Validate in-memory MassBank record content
+ * Validate in-memory MassBank record content (browser-compatible)
  * Useful for browser or API use-cases where the record content is not
- * coming from the filesystem.
+ * coming from the filesystem. This function has no Node.js dependencies.
  * @param content - Full record text to validate
  * @param filename - Logical filename for error reporting (e.g. 'user-upload.txt')
  * @param options - Validation options (legacy mode, logger)
