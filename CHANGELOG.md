@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/cheminfo/massbank/compare/v0.2.0...v0.2.1) (2026-01-08)
+
+
+### Bug Fixes
+
+* remove file-utils to prevent browser build errors ([2558fd1](https://github.com/cheminfo/massbank/commit/2558fd15c312b4fcee7f093fab2d960c4868ee39))
+* remove file-utils to prevent browser build errors ([5dc3f0d](https://github.com/cheminfo/massbank/commit/5dc3f0d7ad2c21f86641e7e6c2f2b79f0bb035b8))
+
 ## [0.2.0](https://github.com/cheminfo/massbank/compare/v0.1.0...v0.2.0) (2026-01-08)
 
 
