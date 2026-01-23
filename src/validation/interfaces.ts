@@ -1,4 +1,4 @@
-import type { Record } from '../record.js';
+import type { InternalRecord } from '../record.js';
 import type { ValidationError, ValidationWarning } from '../types.js';
 
 /**
@@ -14,7 +14,7 @@ export interface IValidationRule {
    * @returns Array of errors (empty if valid)
    */
   validate(
-    record: Record,
+    record: InternalRecord,
     originalText: string,
     filename: string,
     options: ValidationRuleOptions,
@@ -24,7 +24,7 @@ export interface IValidationRule {
    * Get warnings for a record (non-blocking issues)
    */
   getWarnings(
-    record: Record,
+    record: InternalRecord,
     originalText: string,
     filename: string,
     options: ValidationRuleOptions,

@@ -1,26 +1,17 @@
 import { readFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { ParseException, parseRecord } from '../parser/index.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// Test files are in the tests/data directory
-const TEST_FILES_DIR = join(__dirname, './data');
+import { ParseException, parseRecord } from '../parser/index.ts';
 
 describe('RecordParser', () => {
   it('should parse a valid record file', async () => {
     const content = await readFile(
-      join(TEST_FILES_DIR, 'MSBNK-test-TST00001.txt'),
+      join(import.meta.dirname, 'data/MSBNK-test-TST00001.txt'),
       'utf8',
     );
     const record = parseRecord(content);
-
-    console.log(record);
 
     expect(record.ACCESSION).toBe('MSBNK-test-TST00001');
 
@@ -41,7 +32,7 @@ describe('RecordParser', () => {
 
   it('should parse record with multiple CH$NAME fields', async () => {
     const content = await readFile(
-      join(TEST_FILES_DIR, 'MSBNK-test-TST00002.txt'),
+      join(import.meta.dirname, 'data/MSBNK-test-TST00002.txt'),
       'utf8',
     );
     const record = parseRecord(content);
@@ -54,7 +45,7 @@ describe('RecordParser', () => {
 
   it('should parse record with annotations', async () => {
     const content = await readFile(
-      join(TEST_FILES_DIR, 'MSBNK-test-TST00003.txt'),
+      join(import.meta.dirname, 'data/MSBNK-test-TST00003.txt'),
       'utf8',
     );
     const record = parseRecord(content);
@@ -66,7 +57,7 @@ describe('RecordParser', () => {
 
   it('should parse deprecated records', async () => {
     const content = await readFile(
-      join(TEST_FILES_DIR, 'MSBNK-test-TST00003.txt'),
+      join(import.meta.dirname, 'data/MSBNK-test-TST00003.txt'),
       'utf8',
     );
     const record = parseRecord(content);
@@ -95,7 +86,10 @@ describe('RecordParser', () => {
 
     const records = await Promise.all(
       files.map(async (file) => {
-        const content = await readFile(join(TEST_FILES_DIR, file), 'utf8');
+        const content = await readFile(
+          join(import.meta.dirname, 'data', file),
+          'utf8',
+        );
         return parseRecord(content);
       }),
     );

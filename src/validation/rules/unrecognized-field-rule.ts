@@ -1,4 +1,4 @@
-import type { Record } from '../../record.js';
+import type { InternalRecord } from '../../record.js';
 import type { ValidationWarning } from '../../types.js';
 import type { IValidationRule, ValidationRuleOptions } from '../interfaces.js';
 
@@ -52,7 +52,7 @@ export class UnrecognizedFieldRule implements IValidationRule {
 
   validate(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _record: Record,
+    _record: InternalRecord,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _originalText: string,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -65,7 +65,7 @@ export class UnrecognizedFieldRule implements IValidationRule {
   }
 
   getWarnings(
-    _record: Record,
+    _record: InternalRecord,
     originalText: string,
     filename: string,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -115,6 +115,7 @@ export class UnrecognizedFieldRule implements IValidationRule {
   /**
    * Find a similar field name for typo suggestions
    * Uses simple Levenshtein distance for similarity
+   * @param input
    */
   private findSimilarField(input: string): string | null {
     let bestMatch: string | null = null;
@@ -134,6 +135,8 @@ export class UnrecognizedFieldRule implements IValidationRule {
 
   /**
    * Calculate Levenshtein distance between two strings
+   * @param a
+   * @param b
    */
   private levenshteinDistance(a: string, b: string): number {
     const matrix: number[][] = [];

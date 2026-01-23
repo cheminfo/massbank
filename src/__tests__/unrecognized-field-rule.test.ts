@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Record } from '../record.js';
+import type { InternalRecord } from '../record.js';
 import { UnrecognizedFieldRule } from '../validation/rules/unrecognized-field-rule.js';
 
 describe('UnrecognizedFieldRule', () => {
   const rule = new UnrecognizedFieldRule();
-  const dummyRecord: Record = { ACCESSION: 'TEST' } as Record;
+  const dummyRecord: InternalRecord = { ACCESSION: 'TEST' } as InternalRecord;
 
   it('should not warn for recognized fields', () => {
     const text = `ACCESSION: TEST

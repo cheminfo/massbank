@@ -1,4 +1,4 @@
-import type { Record } from '../record.js';
+import type { InternalRecord } from '../record.js';
 
 /**
  * Interface for serializing MassBank records
@@ -10,5 +10,5 @@ export interface IRecordSerializer {
    * @param record - The record to serialize
    * @returns The serialized record string
    */
-  serialize(record: Record): string;
+  serialize(record: InternalRecord): string;
 }

@@ -1,4 +1,4 @@
-import type { Record } from '../record.js';
+import type { InternalRecord } from '../record.js';
 
 import type { IRecordSerializer } from './interfaces.js';
 
@@ -12,7 +12,7 @@ export class RecordSerializer implements IRecordSerializer {
    * Maintains exact formatting for round-trip validation
    * @param record
    */
-  serialize(record: Record): string {
+  serialize(record: InternalRecord): string {
     const lines: string[] = [];
 
     // Header fields - DEPRECATED must come right after ACCESSION
@@ -186,7 +186,7 @@ export function createSerializer(): IRecordSerializer {
  * Convenience function to serialize a record
  * @param record
  */
-export function serializeRecord(record: Record): string {
+export function serializeRecord(record: InternalRecord): string {
   const serializer = createSerializer();
   return serializer.serialize(record);
 }

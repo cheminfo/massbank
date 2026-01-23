@@ -1,5 +1,5 @@
 import { PositionUtils } from '../../parser/index.js';
-import type { Record } from '../../record.js';
+import type { InternalRecord } from '../../record.js';
 import { serializeRecord } from '../../serializer/index.js';
 import type { ValidationError, ValidationWarning } from '../../types.js';
 import type { IValidationRule, ValidationRuleOptions } from '../interfaces.js';
@@ -11,7 +11,7 @@ import type { IValidationRule, ValidationRuleOptions } from '../interfaces.js';
  */
 export class SerializationRule implements IValidationRule {
   validate(
-    record: Record,
+    record: InternalRecord,
     originalText: string,
     filename: string,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars

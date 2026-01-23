@@ -1,4 +1,4 @@
-import type { Record } from '../record.js';
+import type { InternalRecord } from '../record.js';
 
 import type { ISplashValidator } from './interfaces.js';
 
@@ -54,7 +54,7 @@ export class SplashValidator implements ISplashValidator {
    * Validate SPLASH value against peak data
    * @param record
    */
-  async validate(record: Record): Promise<boolean> {
+  async validate(record: InternalRecord): Promise<boolean> {
     if (!record.PK$SPLASH || !record.PK$PEAK) {
       return true; // No SPLASH to validate, or no peaks
     }

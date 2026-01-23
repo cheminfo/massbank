@@ -1,4 +1,4 @@
-export { RecordParser, createParser, parseRecord } from './record-parser.js';
+export { RecordParser, createParser, parseRecord } from './parse-record.ts';
 export { ParseException } from './exceptions.js';
 export type {
   IFieldParser,

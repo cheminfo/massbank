@@ -1,4 +1,4 @@
-import type { Record } from '../record.js';
+import type { InternalRecord } from '../record.js';
 
 /**
  * Interface for SPLASH calculation and validation
@@ -16,5 +16,5 @@ export interface ISplashValidator {
    * @param record - The record containing SPLASH and peaks
    * @returns true if SPLASH is valid, false otherwise
    */
-  validate(record: Record): Promise<boolean>;
+  validate(record: InternalRecord): Promise<boolean>;
 }

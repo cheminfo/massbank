@@ -1,4 +1,4 @@
-import type { Record } from '../record.js';
+import type { InternalRecord } from '../record.js';
 
 import type { IFieldParser } from './interfaces.js';
 
@@ -7,7 +7,7 @@ import type { IFieldParser } from './interfaces.js';
  */
 abstract class BaseFieldParser implements IFieldParser {
   abstract canParse(key: string): boolean;
-  abstract parse(key: string, value: string, record: Record): void;
+  abstract parse(key: string, value: string, record: InternalRecord): void;
 }
 
 /**
@@ -30,7 +30,7 @@ export class HeaderFieldParser extends BaseFieldParser {
     return headerFields.includes(key);
   }
 
-  parse(key: string, value: string, record: Record): void {
+  parse(key: string, value: string, record: InternalRecord): void {
     switch (key) {
       case 'ACCESSION':
         record.ACCESSION = value;
@@ -79,7 +79,7 @@ export class CompoundFieldParser extends BaseFieldParser {
     return key.startsWith('CH$');
   }
 
-  parse(key: string, value: string, record: Record): void {
+  parse(key: string, value: string, record: InternalRecord): void {
     switch (key) {
       case 'CH$NAME':
         if (!record.CH$NAME) {
@@ -122,7 +122,7 @@ export class AnalyticalConditionsFieldParser extends BaseFieldParser {
     return key.startsWith('AC$');
   }
 
-  parse(key: string, value: string, record: Record): void {
+  parse(key: string, value: string, record: InternalRecord): void {
     switch (key) {
       case 'AC$INSTRUMENT':
         record.AC$INSTRUMENT = value;
@@ -156,7 +156,7 @@ export class MassSpectrometryFieldParser extends BaseFieldParser {
     return key.startsWith('MS$');
   }
 
-  parse(key: string, value: string, record: Record): void {
+  parse(key: string, value: string, record: InternalRecord): void {
     switch (key) {
       case 'MS$FOCUSED_ION':
         if (!record.MS$FOCUSED_ION) {
@@ -186,7 +186,7 @@ export class PeakFieldParser extends BaseFieldParser {
     );
   }
 
-  parse(key: string, value: string, record: Record): void {
+  parse(key: string, value: string, record: InternalRecord): void {
     switch (key) {
       case 'PK$SPLASH':
         record.PK$SPLASH = value;
@@ -213,7 +213,7 @@ export class SpeciesFieldParser extends BaseFieldParser {
     return key.startsWith('SP$');
   }
 
-  parse(key: string, value: string, record: Record): void {
+  parse(key: string, value: string, record: InternalRecord): void {
     switch (key) {
       case 'SP$SCIENTIFIC_NAME':
         record.SP$SCIENTIFIC_NAME = value;

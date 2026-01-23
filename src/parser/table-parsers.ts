@@ -1,4 +1,9 @@
-import type { Annotation, Peak, Record } from '../record.js';
+import type {
+  Annotation,
+  AnnotationWithOriginal,
+  InternalRecord,
+  Peak,
+} from '../record.js';
 
 import type { ITableParser } from './interfaces.js';
 
@@ -11,7 +16,7 @@ abstract class BaseTableParser implements ITableParser {
     key: string,
     lines: string[],
     startIndex: number,
-    record: Record,
+    record: InternalRecord,
     headerLine?: string,
   ): number;
 }
@@ -28,7 +33,7 @@ export class PeakTableParser extends BaseTableParser {
     key: string,
     lines: string[],
     startIndex: number,
-    record: Record,
+    record: InternalRecord,
     _headerLine?: string,
   ): number {
     void _headerLine;
@@ -104,7 +109,7 @@ export class AnnotationTableParser extends BaseTableParser {
     key: string,
     lines: string[],
     startIndex: number,
-    record: Record,
+    record: InternalRecord,
     headerLine?: string,
   ): number {
     const annotations: Annotation[] = [];
@@ -155,7 +160,7 @@ export class AnnotationTableParser extends BaseTableParser {
       return null;
     }
 
-    const annotation: Annotation = {
+    const annotation: AnnotationWithOriginal = {
       mz,
       _original: line.trim(),
     };

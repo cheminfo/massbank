@@ -1,11 +1,21 @@
 /**
- * MassBank Record structure
+ * MassBank InternalRecord structure
  */
 
 export interface Peak {
   mz: number;
   intensity: number;
   relativeIntensity: number;
+}
+
+export interface Annotation {
+  mz: number;
+  annotation?: string;
+  exactMass?: number;
+  errorPpm?: number;
+}
+
+export interface PeakWithOriginal extends Peak {
   // Store original string representations for round-trip serialization
   _original?: {
     mz: string;
@@ -14,16 +24,12 @@ export interface Peak {
   };
 }
 
-export interface Annotation {
-  mz: number;
-  annotation?: string;
-  exactMass?: number;
-  errorPpm?: number;
+export interface AnnotationWithOriginal extends Annotation {
   // Store original string representation for round-trip serialization
   _original?: string;
 }
 
-export interface Record {
+export interface InternalRecord {
   // Header fields
   ACCESSION: string;
   RECORD_TITLE?: string;
@@ -58,8 +64,8 @@ export interface Record {
   // PK$ section - Peak data
   PK$SPLASH?: string;
   PK$NUM_PEAK?: number;
-  PK$PEAK?: Peak[];
-  PK$ANNOTATION?: Annotation[];
+  PK$PEAK?: PeakWithOriginal[];
+  PK$ANNOTATION?: AnnotationWithOriginal[];
   // Store original annotation header for exact serialization
   _PK$ANNOTATION_HEADER?: string;
 
@@ -68,4 +74,53 @@ export interface Record {
   SP$LINEAGE?: string;
   SP$LINK?: string[];
   SP$SAMPLE?: string;
+}
+
+export interface Record {
+  accession: string;
+  recordTitle?: string;
+  date?: string;
+  authors?: string;
+  license?: string;
+  copyright?: string;
+  publication?: string;
+  project?: string;
+  comment?: string[];
+  deprecated?: string;
+
+  compound?: {
+    name?: string[];
+    compoundClass?: string;
+    formula?: string;
+    exactMass?: string;
+    smiles?: string;
+    iupac?: string;
+    link?: string[];
+  };
+
+  analyticalConditions?: {
+    instrument?: string;
+    instrumentType?: string;
+    massSpectrometry?: string[];
+    chromatography?: string[];
+  };
+
+  massSpectrometryData?: {
+    focusedIon?: string[];
+    dataProcessing?: string[];
+  };
+
+  peakData?: {
+    splash?: string;
+    numPeak?: number;
+    peak?: Peak[];
+    annotation?: Annotation[];
+  };
+
+  species?: {
+    scientificName?: string;
+    lineage?: string;
+    link?: string[];
+    sample?: string;
+  };
 }

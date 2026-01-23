@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { parseRecord } from '../parser/index.js';
-import type { Record } from '../record.js';
+import type { InternalRecord } from '../record.js';
 import { NonStandardCharsRule } from '../validation/rules/non-standard-chars-rule.js';
 
 describe('NonStandardCharsRule - Position Calculations', () => {
@@ -38,7 +38,7 @@ RECORD_TITLE: Test
 
     // This text is not a valid record (terminator line contains extra data),
     // so construct a minimal record manually.
-    const record: Record = {
+    const record: InternalRecord = {
       ACCESSION: 'TEST001',
     };
     const rule = new NonStandardCharsRule();

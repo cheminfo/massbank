@@ -2,7 +2,7 @@ import type { TextData } from 'cheminfo-types';
 import { ensureString } from 'ensure-string';
 
 import { ParseException } from '../parser/exceptions.ts';
-import { parseRecord } from '../parser/record-parser.ts';
+import { parseRecord } from '../parser/parse-record.ts';
 import type {
   ValidationError,
   ValidationOptions,
@@ -30,12 +30,12 @@ export async function validateContent(
   const warnings: ValidationWarning[] = [];
   const accessions: string[] = [];
 
-  content = ensureString(content);
+  const text = ensureString(content);
 
   // Parse the record
   let record;
   try {
-    record = parseRecord(content);
+    record = parseRecord(text);
   } catch (error) {
     if (error instanceof ParseException) {
       errors.push({
@@ -61,12 +61,12 @@ export async function validateContent(
   const rules = recordValidator.getRules();
 
   for (const rule of rules) {
-    const ruleErrors = rule.validate(record, content, filename, {
+    const ruleErrors = rule.validate(record, text, filename, {
       legacy: options.legacy,
     });
     errors.push(...ruleErrors);
 
-    const ruleWarnings = rule.getWarnings(record, content, filename, {
+    const ruleWarnings = rule.getWarnings(record, text, filename, {
       legacy: options.legacy,
     });
     warnings.push(...ruleWarnings);

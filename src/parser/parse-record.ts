@@ -1,6 +1,6 @@
-import type { Record } from '../record.js';
+import type { InternalRecord } from '../record.ts';
 
-import { ParseException } from './exceptions.js';
+import { ParseException } from './exceptions.ts';
 import {
   AnalyticalConditionsFieldParser,
   CompoundFieldParser,
@@ -8,14 +8,14 @@ import {
   MassSpectrometryFieldParser,
   PeakFieldParser,
   SpeciesFieldParser,
-} from './field-parsers.js';
+} from './field-parsers.ts';
 import type {
   IFieldParser,
   IRecordParser,
   ITableParser,
-} from './interfaces.js';
-import { PositionUtils } from './position-utils.js';
-import { AnnotationTableParser, PeakTableParser } from './table-parsers.js';
+} from './interfaces.ts';
+import { PositionUtils } from './position-utils.ts';
+import { AnnotationTableParser, PeakTableParser } from './table-parsers.ts';
 
 /**
  * Main MassBank record parser
@@ -42,12 +42,12 @@ export class RecordParser implements IRecordParser {
   }
 
   /**
-   * Parse a MassBank record string into a Record object
+   * Parse a MassBank record string into a InternalRecord object
    * @param text
    */
-  parse(text: string): Record {
+  parse(text: string): InternalRecord {
     const lines = text.split(/\r?\n/);
-    const record: Record = {
+    const record: InternalRecord = {
       ACCESSION: '',
     };
 
@@ -147,9 +147,10 @@ export function createParser(): IRecordParser {
 
 /**
  * Convenience function to parse a record
- * @param text
+ * @param text - MassBank record as string
+ * @returns Parsed InternalRecord object
  */
-export function parseRecord(text: string): Record {
+export function parseRecord(text: string): InternalRecord {
   const parser = createParser();
   return parser.parse(text);
 }

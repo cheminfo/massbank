@@ -1,9 +1,10 @@
-import type { Record } from '../../record.js';
+import type { InternalRecord } from '../../record.js';
 import type { ValidationError, ValidationWarning } from '../../types.js';
 import type { IValidationRule, ValidationRuleOptions } from '../interfaces.js';
 
 /**
  * Get the filename from a path (browser-compatible alternative to path.basename)
+ * @param filepath
  */
 function getBasename(filepath: string): string {
   const lastSlash = Math.max(
@@ -15,6 +16,7 @@ function getBasename(filepath: string): string {
 
 /**
  * Remove the extension from a filename (browser-compatible alternative to path.extname)
+ * @param filename
  */
 function removeExtension(filename: string): string {
   const lastDot = filename.lastIndexOf('.');
@@ -28,7 +30,7 @@ function removeExtension(filename: string): string {
  */
 export class AccessionMatchRule implements IValidationRule {
   validate(
-    record: Record,
+    record: InternalRecord,
     _originalText: string,
     filename: string,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
