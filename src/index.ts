@@ -3,8 +3,8 @@
  * Main entry point for the package
  */
 
-// Validation functions
-export { validate, validateContent } from './validator/index.js';
+export * from './validator/validator.ts';
+export * from './validator/validateContent.ts';
 
 // Types for reading validation results
 export type {

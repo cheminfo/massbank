@@ -10,7 +10,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Test files are in the tests/data directory
-const TEST_FILES_DIR = join(__dirname, '../../tests/data');
+const TEST_FILES_DIR = join(__dirname, './data');
 
 describe('RecordParser', () => {
   it('should parse a valid record file', async () => {
@@ -19,6 +19,8 @@ describe('RecordParser', () => {
       'utf8',
     );
     const record = parseRecord(content);
+
+    console.log(record);
 
     expect(record.ACCESSION).toBe('MSBNK-test-TST00001');
 

@@ -11,7 +11,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Test files are in the tests/data directory
-const TEST_FILES_DIR = join(__dirname, '../../tests/data');
+const TEST_FILES_DIR = join(__dirname, './data');
 
 describe('RecordSerializer', () => {
   it('should serialize and round-trip TST00001', async () => {

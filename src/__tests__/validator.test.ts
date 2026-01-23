@@ -1,21 +1,15 @@
 import { readFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { validate, validateContent } from '../validator/index.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// Test files are in the tests/data directory
-const TEST_FILES_DIR = join(__dirname, '../../tests/data');
+import { validate, validateContent } from '../index.js';
 
 describe('MassBankValidator', () => {
   it('should validate a single file successfully', async () => {
     const result = await validate(
-      join(TEST_FILES_DIR, 'MSBNK-test-TST00001.txt'),
+      join(import.meta.dirname, 'data/MSBNK-test-TST00001.txt'),
     );
 
     expect(result.success).toBe(true);
@@ -26,7 +20,7 @@ describe('MassBankValidator', () => {
 
   it('should return errors for invalid file', async () => {
     const invalidContent = 'INVALID CONTENT WITHOUT ACCESSION\n//';
-    const tempDir = join(__dirname, '../__temp_test_files__');
+    const tempDir = join(tmpdir(), 'massbank-tests');
     const { mkdir, writeFile, unlink } = await import('node:fs/promises');
     await mkdir(tempDir, { recursive: true }).catch(() => {
       // Ignore if directory already exists
@@ -61,7 +55,7 @@ describe('validateContent (browser-compatible)', () => {
   it('should validate content string successfully', async () => {
     // Read file content manually (simulates browser File.text())
     const content = await readFile(
-      join(TEST_FILES_DIR, 'MSBNK-test-TST00001.txt'),
+      join(import.meta.dirname, 'data/MSBNK-test-TST00001.txt'),
       'utf8',
     );
 
@@ -76,7 +70,7 @@ describe('validateContent (browser-compatible)', () => {
 
   it('should work with Unix-style path as filename', async () => {
     const content = await readFile(
-      join(TEST_FILES_DIR, 'MSBNK-test-TST00001.txt'),
+      join(import.meta.dirname, 'data/MSBNK-test-TST00001.txt'),
       'utf8',
     );
 
@@ -92,7 +86,7 @@ describe('validateContent (browser-compatible)', () => {
 
   it('should work with Windows-style path as filename', async () => {
     const content = await readFile(
-      join(TEST_FILES_DIR, 'MSBNK-test-TST00001.txt'),
+      join(import.meta.dirname, 'data/MSBNK-test-TST00001.txt'),
       'utf8',
     );
 
@@ -117,7 +111,7 @@ describe('validateContent (browser-compatible)', () => {
 
   it('should detect accession-filename mismatch', async () => {
     const content = await readFile(
-      join(TEST_FILES_DIR, 'MSBNK-test-TST00001.txt'),
+      join(import.meta.dirname, 'data/MSBNK-test-TST00001.txt'),
       'utf8',
     );
 
@@ -133,7 +127,7 @@ describe('validateContent (browser-compatible)', () => {
   it('should handle complex records with multiple fields', async () => {
     // TST00002 is a more complex record with many fields
     const content = await readFile(
-      join(TEST_FILES_DIR, 'MSBNK-test-TST00002.txt'),
+      join(import.meta.dirname, 'data/MSBNK-test-TST00002.txt'),
       'utf8',
     );
 
@@ -147,7 +141,7 @@ describe('validateContent (browser-compatible)', () => {
     // This test verifies the browser-compatible path handling works
     // by using filenames that would fail with incorrect path parsing
     const content = await readFile(
-      join(TEST_FILES_DIR, 'MSBNK-test-TST00001.txt'),
+      join(import.meta.dirname, 'data/MSBNK-test-TST00001.txt'),
       'utf8',
     );
 
