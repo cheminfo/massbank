@@ -5,6 +5,7 @@
 
 export * from './validator/validator.ts';
 export * from './validator/validateContent.ts';
+export * from './get-variables.ts';
 
 // Types for reading validation results
 export type {

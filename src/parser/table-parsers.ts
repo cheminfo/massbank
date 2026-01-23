@@ -2,7 +2,7 @@ import type {
   Annotation,
   AnnotationWithOriginal,
   InternalRecord,
-  Peak,
+  PeakWithOriginal,
 } from '../record.js';
 
 import type { ITableParser } from './interfaces.js';
@@ -37,7 +37,7 @@ export class PeakTableParser extends BaseTableParser {
     _headerLine?: string,
   ): number {
     void _headerLine;
-    const peaks: Peak[] = [];
+    const peaks: PeakWithOriginal[] = [];
     let i = startIndex;
 
     while (i < lines.length) {
@@ -60,7 +60,7 @@ export class PeakTableParser extends BaseTableParser {
     return i - startIndex;
   }
 
-  private parsePeakLine(line: string): Peak | null {
+  private parsePeakLine(line: string): PeakWithOriginal | null {
     const parts = line.trim().split(/\s+/);
     if (parts.length < 2) {
       return null;

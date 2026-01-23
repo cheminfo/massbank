@@ -76,7 +76,7 @@ export interface InternalRecord {
   SP$SAMPLE?: string;
 }
 
-export interface Record {
+export interface MassBankRecord {
   accession: string;
   recordTitle?: string;
   date?: string;

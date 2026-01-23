@@ -48,6 +48,7 @@
   },
   "homepage": "https://github.com/cheminfo/massbank#readme",
   "dependencies": {
+    "camelcase": "^9.0.0",
     "ensure-string": "^1.2.0"
   }
 }
