@@ -1,11 +1,13 @@
-import { ParseException, parseRecord } from '../parser/index.js';
+import { readFile } from 'node:fs/promises';
+
+import { ParseException, parseRecord } from '../parser/index.ts';
 import type {
   ValidationError,
   ValidationOptions,
   ValidationResult,
   ValidationWarning,
-} from '../types.js';
-import { RecordValidator } from '../validation/index.js';
+} from '../types.ts';
+import { RecordValidator } from '../validation/index.ts';
 
 /**
  * Validate a single MassBank record file (Node.js only)
@@ -26,9 +28,6 @@ export async function validate(
   if (options.logger) {
     options.logger.info(`Validating file: ${filePath}`);
   }
-
-  // Dynamic import to avoid pulling node:fs/promises into browser bundles
-  const { readFile } = await import('node:fs/promises');
 
   // Read file
   let fileContent: string;

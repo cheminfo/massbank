@@ -3,7 +3,7 @@
  * Main entry point for the package
  */
 
-export * from './validator/validator.ts';
+export * from './validator/validate.ts';
 export * from './validator/validateContent.ts';
 export * from './get-variables.ts';
 
