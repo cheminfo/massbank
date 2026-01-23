@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/cheminfo/massbank/compare/v0.2.1...v0.3.0) (2026-01-23)
+
+
+### Features
+
+* add getVariables ([da7f141](https://github.com/cheminfo/massbank/commit/da7f141045c0d543794a34567a4a3facb8d588a2))
+
 ## [0.2.1](https://github.com/cheminfo/massbank/compare/v0.2.0...v0.2.1) (2026-01-08)
 
 
