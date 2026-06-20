@@ -1,5 +1,7 @@
 import type { InternalRecord } from '../record.js';
 
+import type { SplashPeak } from './calculate-splash.js';
+
 /**
  * Interface for SPLASH calculation and validation
  */
@@ -9,7 +11,7 @@ export interface ISplashValidator {
    * @param peaks - Array of peaks (m/z and intensity)
    * @returns The calculated SPLASH value
    */
-  calculate(peaks: Array<{ mz: number; intensity: number }>): Promise<string>;
+  calculate(peaks: SplashPeak[]): Promise<string>;
 
   /**
    * Validate SPLASH value against peak data

@@ -79,10 +79,20 @@ export async function validate(
   const rules = recordValidator.getRules();
 
   for (const rule of rules) {
-    const ruleErrors = rule.validate(record, fileContent, filePath, {
-      legacy: options.legacy,
-    });
-    errors.push(...ruleErrors);
+    try {
+      // eslint-disable-next-line no-await-in-loop -- rules run in a defined order
+      const ruleErrors = await rule.validate(record, fileContent, filePath, {
+        legacy: options.legacy,
+      });
+      errors.push(...ruleErrors);
+    } catch (error) {
+      // A rule throwing must never crash the run or silently pass — surface it.
+      errors.push({
+        file: filePath,
+        message: `Validation rule failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        type: 'other',
+      });
+    }
 
     const ruleWarnings = rule.getWarnings(record, fileContent, filePath, {
       legacy: options.legacy,

@@ -125,3 +125,11 @@ samples/
 validate-samples.ts
 
 massbank.code-workspace
+
+# Local issue tracking
+issue.md
+
+# Local tooling config (kept local, not committed)
+CLAUDE.md
+.claude/
+.serena/
