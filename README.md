@@ -71,6 +71,7 @@ The validator performs the following checks:
 3. **Unrecognized Fields** - Warns about unrecognized field names (helps catch typos like `RECRD_TITLE` instead of `RECORD_TITLE`)
 4. **Non-Standard Characters** - Warns about non-standard ASCII characters (non-blocking)
 5. **Serialization Round-Trip** - Ensures parse → serialize → compare matches exactly (guarantees no data loss)
+6. **SPLASH** - Recomputes the canonical SPLASH **offline** from the peak list and compares it to `PK$SPLASH`; a mismatch is a blocking error (no network, no fail-open). A record with no `PK$SPLASH` is skipped — generating one is the caller's choice (see `fillSplash` / `resolveSplash`).
 
 ## API Reference
 
@@ -109,6 +110,40 @@ Validate in-memory MassBank record content (no file I/O).
 
 **Returns:** `Promise<ValidationResult>`
 
+### SPLASH
+
+[SPLASH](https://splash.fiehnlab.ucdavis.edu/) (SPectraL hASH) is a deterministic content hash of a mass spectrum. It is computed locally and offline (Web Crypto, browser-compatible — no network), so computation and validation are deterministic and require no external service.
+
+```typescript
+import {
+  calculateSplash,
+  resolveSplash,
+  resolveSplashFromRecord,
+  fillSplash,
+} from 'massbank';
+
+// Compute the canonical SPLASH from a peak list.
+const splash = await calculateSplash([{ mz: 117.0572, intensity: 100 }]);
+
+// Reconcile a record's declared PK$SPLASH against the peaks (pure, never mutates).
+const outcome = await resolveSplashFromRecord(recordText);
+switch (outcome.status) {
+  case 'computed': // PK$SPLASH was missing → outcome.splash is canonical
+  case 'verified': // declared matches the computed SPLASH
+  case 'mismatch': // declared is wrong → outcome.computed vs outcome.declared
+  case 'notApplicable': // no/zero/unhashable peaks → outcome.reason
+}
+
+// Return the record text with a correct PK$SPLASH inserted/replaced.
+const filled = await fillSplash(recordText);
+```
+
+- **`calculateSplash(peaks)`** → `Promise<string>` — the canonical `splash10-…` hash. Throws `RangeError` for an empty, all-zero, or non-finite/negative spectrum.
+- **`resolveSplash(peaks, declared?)`** / **`resolveSplashFromRecord(text)`** → `Promise<SplashOutcome>` — pure inspection. Never throws, never mutates. `SplashOutcome` is a discriminated union of `computed` / `verified` / `mismatch` / `notApplicable`. The `mismatch` case has no single `splash` field, so a wrong value cannot be trusted by accident.
+- **`fillSplash(text)`** → `Promise<string>` — explicit generation: returns the record text with `PK$SPLASH` set to the canonical value (inserted in canonical position, or replaced).
+
+Inspection (`resolveSplash`), generation (`fillSplash`), and validation (`validate`) are separate, so consumers own their flow (auto-fill vs. user-approved).
+
 ## MassBank Format 2.6.0 Compliance
 
 This library enforces MassBank format 2.6.0 standards, including:
@@ -118,12 +153,13 @@ This library enforces MassBank format 2.6.0 standards, including:
   - Record ID: up to 64 characters (capital letters, digits, underscore)
 - **Filename matching:** File must be named `{ACCESSION}.txt`
 - **Required fields:** ACCESSION, RECORD_TITLE, DATE, AUTHORS, LICENSE, and more
-- **SPLASH validation:** Optional spectral hash validation via API
+- **SPLASH validation:** `PK$SPLASH` is recomputed offline and compared against the peak list
 
 ## Requirements
 
-- Node.js 18+ (for native fetch support in SPLASH validation)
+- Node.js 20+ (or a 2023-era evergreen browser) — uses Web Crypto and `Array.prototype.toSorted()`
 - No external runtime dependencies (only optional `fifo-logger`)
+- Browser-compatible: `validateContent`, `getVariables`, and all SPLASH functions run in the browser; only `validate` (file I/O) is Node-only
 
 ## License
 
