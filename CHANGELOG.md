@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/cheminfo/massbank/compare/v0.3.0...v0.4.0) (2026-06-20)
+
+
+### Features
+
+* local offline SPLASH - calculate, resolve/verify, fill, validate ([4b39378](https://github.com/cheminfo/massbank/commit/4b39378d49649bdb958a40356d5871bd22686134))
+* local offline SPLASH — calculate, resolve/verify, fill, validate ([c5e9fe2](https://github.com/cheminfo/massbank/commit/c5e9fe2175ce40ea2020da35349e33114554e3da))
+
+
+### Bug Fixes
+
+* address review — Node 20 engines, reject unhashable peaks, no-throw validator, isolate getWarnings ([a97ae54](https://github.com/cheminfo/massbank/commit/a97ae544f51fd182a420e3c0d4d31f405285f5fe))
+
 ## [0.3.0](https://github.com/cheminfo/massbank/compare/v0.2.1...v0.3.0) (2026-01-23)
 
 
