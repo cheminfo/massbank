@@ -24,8 +24,9 @@ export class SplashValidator implements ISplashValidator {
   /**
    * Validate a record's `PK$SPLASH` against its peak list.
    *
-   * Returns true (nothing to check) when the record has no `PK$SPLASH` or no
-   * peaks. Otherwise recomputes the SPLASH locally and compares.
+   * Returns true (nothing to check) when the record has no `PK$SPLASH`, no
+   * peaks, or peaks that cannot be hashed (empty/all-zero/non-finite).
+   * Otherwise recomputes the SPLASH locally and compares.
    * @param record - the record to validate
    * @returns true if the SPLASH is absent/not-applicable or matches the peaks
    */
@@ -34,9 +35,17 @@ export class SplashValidator implements ISplashValidator {
       return true;
     }
 
-    const calculated = await this.calculate(
-      record.PK$PEAK.map((p) => ({ mz: p.mz, intensity: p.intensity })),
-    );
+    let calculated: string;
+    try {
+      calculated = await this.calculate(
+        record.PK$PEAK.map((p) => ({ mz: p.mz, intensity: p.intensity })),
+      );
+    } catch (error) {
+      // Unhashable peaks → nothing to compare against; treat as not-applicable
+      // rather than throwing from this boolean API.
+      if (error instanceof RangeError) return true;
+      throw error;
+    }
 
     return calculated === record.PK$SPLASH;
   }

@@ -193,11 +193,22 @@ async function calculateHashBlock(peaks: SplashPeak[]): Promise<string> {
  * encodes MS spectrum type (`1`) and version (`0`).
  * @param peaks - the spectrum's peaks (absolute intensities)
  * @returns the SPLASH string
- * @throws {RangeError} if the spectrum is empty or all intensities are zero
+ * @throws {RangeError} if the spectrum is empty, all intensities are zero, or
+ *   any m/z or intensity is non-finite (NaN/Infinity) or intensity is negative
  */
 export async function calculateSplash(peaks: SplashPeak[]): Promise<string> {
   if (peaks.length === 0) {
     throw new RangeError('Cannot calculate SPLASH for an empty spectrum.');
+  }
+
+  // Reject unhashable input up front so we never emit a non-canonical or
+  // NaN-bearing hash (resolveSplash maps this to a `notApplicable` outcome).
+  for (const { mz, intensity } of peaks) {
+    if (!Number.isFinite(mz) || !Number.isFinite(intensity) || intensity < 0) {
+      throw new RangeError(
+        'Cannot calculate SPLASH: peak list contains non-finite or negative values.',
+      );
+    }
   }
 
   const basePeak = maxIntensity(peaks);

@@ -94,10 +94,18 @@ export async function validate(
       });
     }
 
-    const ruleWarnings = rule.getWarnings(record, fileContent, filePath, {
-      legacy: options.legacy,
-    });
-    warnings.push(...ruleWarnings);
+    try {
+      const ruleWarnings = rule.getWarnings(record, fileContent, filePath, {
+        legacy: options.legacy,
+      });
+      warnings.push(...ruleWarnings);
+    } catch (error) {
+      errors.push({
+        file: filePath,
+        message: `Validation rule failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        type: 'other',
+      });
+    }
   }
 
   if (record.ACCESSION) {

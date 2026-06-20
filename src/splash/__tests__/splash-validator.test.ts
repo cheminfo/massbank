@@ -62,4 +62,17 @@ describe('SplashValidator (local, offline)', () => {
 
     await expect(validator.validate(record)).resolves.toBe(true);
   });
+
+  it('validate() returns true (does not throw) for unhashable peaks', async () => {
+    const validator = createSplashValidator();
+    const record = makeRecord({
+      PK$SPLASH: CORRECT_SPLASH,
+      PK$PEAK: [
+        { mz: 100, intensity: 0, relativeIntensity: 0 },
+        { mz: 200, intensity: 0, relativeIntensity: 0 },
+      ],
+    });
+
+    await expect(validator.validate(record)).resolves.toBe(true);
+  });
 });

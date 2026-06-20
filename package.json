@@ -7,7 +7,7 @@
   "author": "Luc Patiny",
   "type": "module",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "browser": {
     "./lib/validator/validate.js": "./lib/validator/validate.browser.js"

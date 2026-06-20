@@ -59,6 +59,33 @@ describe('calculateSplash', () => {
     await expect(calculateSplash(peaks)).rejects.toThrow(RangeError);
   });
 
+  it('throws RangeError for a non-finite m/z', async () => {
+    await expect(
+      calculateSplash([
+        { mz: Number.NaN, intensity: 100 },
+        { mz: 50, intensity: 50 },
+      ]),
+    ).rejects.toThrow(RangeError);
+  });
+
+  it('throws RangeError for a negative intensity', async () => {
+    await expect(
+      calculateSplash([
+        { mz: 100, intensity: -5 },
+        { mz: 50, intensity: 50 },
+      ]),
+    ).rejects.toThrow(RangeError);
+  });
+
+  it('throws RangeError for an Infinity intensity', async () => {
+    await expect(
+      calculateSplash([
+        { mz: 100, intensity: Number.POSITIVE_INFINITY },
+        { mz: 50, intensity: 50 },
+      ]),
+    ).rejects.toThrow(RangeError);
+  });
+
   it('produces a valid hash for a single peak', async () => {
     const result = await calculateSplash([{ mz: 117.0572, intensity: 100 }]);
 

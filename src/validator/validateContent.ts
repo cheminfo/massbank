@@ -76,10 +76,18 @@ export async function validateContent(
       });
     }
 
-    const ruleWarnings = rule.getWarnings(record, text, filename, {
-      legacy: options.legacy,
-    });
-    warnings.push(...ruleWarnings);
+    try {
+      const ruleWarnings = rule.getWarnings(record, text, filename, {
+        legacy: options.legacy,
+      });
+      warnings.push(...ruleWarnings);
+    } catch (error) {
+      errors.push({
+        file: filename,
+        message: `Validation rule failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        type: 'other',
+      });
+    }
   }
 
   if (record.ACCESSION) {
