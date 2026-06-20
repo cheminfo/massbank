@@ -6,6 +6,9 @@
   "keywords": [],
   "author": "Luc Patiny",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "browser": {
     "./lib/validator/validate.js": "./lib/validator/validate.browser.js"
   },

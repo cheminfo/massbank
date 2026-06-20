@@ -6,6 +6,7 @@
 export * from './validator/validate.ts';
 export * from './validator/validateContent.ts';
 export * from './get-variables.ts';
+export * from './splash/index.ts';
 
 // Types for reading validation results
 export type {

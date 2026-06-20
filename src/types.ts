@@ -31,7 +31,13 @@ export interface ValidationError {
   /**
    * Error type/category
    */
-  type: 'parse' | 'validation' | 'serialization' | 'duplicate' | 'other';
+  type:
+    | 'parse'
+    | 'validation'
+    | 'serialization'
+    | 'splash'
+    | 'duplicate'
+    | 'other';
 }
 
 export interface ValidationWarning {
