@@ -2,5 +2,5 @@ export {
   RecordSerializer,
   createSerializer,
   serializeRecord,
-} from './record-serializer.js';
-export type { IRecordSerializer } from './interfaces.js';
+} from './record-serializer.ts';
+export type { IRecordSerializer } from './interfaces.ts';

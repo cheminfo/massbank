@@ -118,12 +118,12 @@ This library enforces MassBank format 2.6.0 standards, including:
   - Record ID: up to 64 characters (capital letters, digits, underscore)
 - **Filename matching:** File must be named `{ACCESSION}.txt`
 - **Required fields:** ACCESSION, RECORD_TITLE, DATE, AUTHORS, LICENSE, and more
-- **SPLASH validation:** Optional spectral hash validation via API
+- **SPLASH validation:** Optional spectral hash validation computed locally (offline)
 
 ## Requirements
 
-- Node.js 18+ (for native fetch support in SPLASH validation)
-- No external runtime dependencies (only optional `fifo-logger`)
+- Node.js 20+
+- SPLASH hashes are computed locally, so no network access is required
 
 ## License
 

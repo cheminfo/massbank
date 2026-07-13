@@ -1,4 +1,4 @@
-import type { InternalRecord } from '../record.js';
+import type { InternalRecord } from '../record.ts';
 
 /**
  * Interface for serializing MassBank records

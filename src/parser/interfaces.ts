@@ -1,4 +1,4 @@
-import type { InternalRecord } from '../record.js';
+import type { InternalRecord } from '../record.ts';
 
 /**
  * Interface for parsing MassBank records
@@ -8,7 +8,7 @@ export interface IRecordParser {
    * Parse a MassBank record string into a InternalRecord object
    * @param text - The MassBank record text
    * @returns The parsed InternalRecord object
-   * @throws {import('./exceptions.js').ParseException} if parsing fails
+   * @throws {import('./exceptions.ts').ParseException} if parsing fails
    */
   parse(text: string): InternalRecord;
 }

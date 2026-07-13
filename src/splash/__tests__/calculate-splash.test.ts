@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { expect, test } from 'vitest';
 
-import type { SplashPeak } from '../calculate-splash.js';
-import { calculateSplash } from '../calculate-splash.js';
+import type { SplashPeak } from '../calculate-splash.ts';
+import { calculateSplash } from '../calculate-splash.ts';
 
 /**
  * Parse a reference spectrum string ("mz:int mz:int ...") into peaks.
@@ -36,92 +36,90 @@ const VECTORS = [
 
 const SPLASH_SHAPE = /^splash10-[0-9a-z]{4}-[0-9a-z]{10}-[0-9a-f]{20}$/;
 
-describe('calculateSplash', () => {
-  it.each(VECTORS)(
-    'reproduces $name byte-for-byte',
-    async ({ spectrum, expected }) => {
-      const result = await calculateSplash(parseSpectrum(spectrum));
+test.each(VECTORS)(
+  'reproduces $name byte-for-byte',
+  async ({ spectrum, expected }) => {
+    const result = await calculateSplash(parseSpectrum(spectrum));
 
-      expect(result).toBe(expected);
-    },
-  );
+    expect(result).toBe(expected);
+  },
+);
 
-  it('throws RangeError for an empty spectrum', async () => {
-    await expect(calculateSplash([])).rejects.toThrow(RangeError);
-  });
+test('throws RangeError for an empty spectrum', async () => {
+  await expect(calculateSplash([])).rejects.toThrow(RangeError);
+});
 
-  it('throws RangeError for an all-zero-intensity spectrum', async () => {
-    const peaks: SplashPeak[] = [
-      { mz: 100, intensity: 0 },
-      { mz: 200, intensity: 0 },
-    ];
+test('throws RangeError for an all-zero-intensity spectrum', async () => {
+  const peaks: SplashPeak[] = [
+    { mz: 100, intensity: 0 },
+    { mz: 200, intensity: 0 },
+  ];
 
-    await expect(calculateSplash(peaks)).rejects.toThrow(RangeError);
-  });
+  await expect(calculateSplash(peaks)).rejects.toThrow(RangeError);
+});
 
-  it('throws RangeError for a non-finite m/z', async () => {
-    await expect(
-      calculateSplash([
-        { mz: Number.NaN, intensity: 100 },
-        { mz: 50, intensity: 50 },
-      ]),
-    ).rejects.toThrow(RangeError);
-  });
+test('throws RangeError for a non-finite m/z', async () => {
+  await expect(
+    calculateSplash([
+      { mz: Number.NaN, intensity: 100 },
+      { mz: 50, intensity: 50 },
+    ]),
+  ).rejects.toThrow(RangeError);
+});
 
-  it('throws RangeError for a negative intensity', async () => {
-    await expect(
-      calculateSplash([
-        { mz: 100, intensity: -5 },
-        { mz: 50, intensity: 50 },
-      ]),
-    ).rejects.toThrow(RangeError);
-  });
+test('throws RangeError for a negative intensity', async () => {
+  await expect(
+    calculateSplash([
+      { mz: 100, intensity: -5 },
+      { mz: 50, intensity: 50 },
+    ]),
+  ).rejects.toThrow(RangeError);
+});
 
-  it('throws RangeError for an Infinity intensity', async () => {
-    await expect(
-      calculateSplash([
-        { mz: 100, intensity: Number.POSITIVE_INFINITY },
-        { mz: 50, intensity: 50 },
-      ]),
-    ).rejects.toThrow(RangeError);
-  });
+test('throws RangeError for an Infinity intensity', async () => {
+  await expect(
+    calculateSplash([
+      { mz: 100, intensity: Number.POSITIVE_INFINITY },
+      { mz: 50, intensity: 50 },
+    ]),
+  ).rejects.toThrow(RangeError);
+});
 
-  it('produces a valid hash for a single peak', async () => {
-    const result = await calculateSplash([{ mz: 117.0572, intensity: 100 }]);
+test('produces a valid hash for a single peak', async () => {
+  const result = await calculateSplash([{ mz: 117.0572, intensity: 100 }]);
 
-    expect(result).toMatch(SPLASH_SHAPE);
-    expect(result).not.toContain('NaN');
-  });
+  expect(result).toMatch(SPLASH_SHAPE);
+  expect(result).not.toContain('NaN');
+});
 
-  it('produces a valid hash for duplicate m/z values', async () => {
-    const result = await calculateSplash([
-      { mz: 100, intensity: 5 },
-      { mz: 100, intensity: 50 },
-      { mz: 200, intensity: 100 },
-    ]);
+test('produces a valid hash for duplicate m/z values', async () => {
+  const result = await calculateSplash([
+    { mz: 100, intensity: 5 },
+    { mz: 100, intensity: 50 },
+    { mz: 200, intensity: 100 },
+  ]);
 
-    expect(result).toMatch(SPLASH_SHAPE);
-    expect(result).not.toContain('NaN');
-  });
+  expect(result).toMatch(SPLASH_SHAPE);
+  expect(result).not.toContain('NaN');
+});
 
-  it('produces a valid hash for very large m/z values', async () => {
-    const result = await calculateSplash([
-      { mz: 1, intensity: 1 },
-      { mz: 999999.9999, intensity: 100 },
-    ]);
+test('produces a valid hash for very large m/z values', async () => {
+  const result = await calculateSplash([
+    { mz: 1, intensity: 1 },
+    { mz: 999999.9999, intensity: 100 },
+  ]);
 
-    expect(result).toMatch(SPLASH_SHAPE);
-    expect(result).not.toContain('NaN');
-  });
+  expect(result).toMatch(SPLASH_SHAPE);
+  expect(result).not.toContain('NaN');
+});
 
-  it('handles a very large spectrum without a stack overflow', async () => {
-    const peaks: SplashPeak[] = Array.from({ length: 200_000 }, (_, i) => ({
-      mz: 50 + i * 0.01,
-      intensity: (i % 1000) + 1,
-    }));
+test('handles a very large spectrum without a stack overflow', async () => {
+  const peaks: SplashPeak[] = Array.from({ length: 200_000 }, (_, i) => ({
+    mz: 50 + i * 0.01,
+    intensity: (i % 1000) + 1,
+  }));
 
-    const result = await calculateSplash(peaks);
+  const result = await calculateSplash(peaks);
 
-    expect(result).toMatch(SPLASH_SHAPE);
-  });
+  expect(result).toMatch(SPLASH_SHAPE);
 });

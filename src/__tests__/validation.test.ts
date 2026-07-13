@@ -1,18 +1,16 @@
 import { readFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { parseRecord } from '../parser/index.js';
+import { parseRecord } from '../parser/index.ts';
 import {
   AccessionMatchRule,
   NonStandardCharsRule,
   SerializationRule,
-} from '../validation/index.js';
+} from '../validation/index.ts';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const __dirname = import.meta.dirname;
 
 // Test files are in the tests/data directory
 const TEST_FILES_DIR = join(__dirname, './data');

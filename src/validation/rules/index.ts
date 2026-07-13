@@ -1,5 +1,5 @@
-export { AccessionMatchRule } from './accession-match-rule.js';
-export { NonStandardCharsRule } from './non-standard-chars-rule.js';
-export { SerializationRule } from './serialization-rule.js';
-export { SplashRule } from './splash-rule.js';
-export { UnrecognizedFieldRule } from './unrecognized-field-rule.js';
+export { AccessionMatchRule } from './accession-match-rule.ts';
+export { NonStandardCharsRule } from './non-standard-chars-rule.ts';
+export { SerializationRule } from './serialization-rule.ts';
+export { SplashRule } from './splash-rule.ts';
+export { UnrecognizedFieldRule } from './unrecognized-field-rule.ts';

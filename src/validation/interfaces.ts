@@ -1,5 +1,5 @@
-import type { InternalRecord } from '../record.js';
-import type { ValidationError, ValidationWarning } from '../types.js';
+import type { InternalRecord } from '../record.ts';
+import type { ValidationError, ValidationWarning } from '../types.ts';
 
 /**
  * Interface for validation rules

@@ -1,11 +1,11 @@
-import type { IValidationRule } from './interfaces.js';
+import type { IValidationRule } from './interfaces.ts';
 import {
   AccessionMatchRule,
   NonStandardCharsRule,
   SerializationRule,
   SplashRule,
   UnrecognizedFieldRule,
-} from './rules/index.js';
+} from './rules/index.ts';
 
 /**
  * Validator that applies all validation rules to a record

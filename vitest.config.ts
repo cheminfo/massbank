@@ -6,8 +6,8 @@ export default defineConfig({
       include: ['src/**'],
       provider: 'v8',
     },
-    setupFiles: [
-      // 'vitest.setup.ts',
-    ],
+    snapshotFormat: {
+      maxOutputLength: Number.MAX_SAFE_INTEGER,
+    },
   },
 });

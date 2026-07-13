@@ -1,9 +1,9 @@
 import type { TextData } from 'cheminfo-types';
 import { ensureString } from 'ensure-string';
 
-import { parseRecord } from '../parser/parse-record.js';
+import { parseRecord } from '../parser/parse-record.ts';
 
-import { calculateSplash } from './calculate-splash.js';
+import { calculateSplash } from './calculate-splash.ts';
 
 // PK$SPLASH is the first line of the PK$ section (order: SPLASH, ANNOTATION,
 // NUM_PEAK, PEAK), so a missing one is inserted just before whichever of these

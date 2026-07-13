@@ -3,10 +3,10 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { parseRecord } from '../../parser/parse-record.js';
-import type { SplashPeak } from '../calculate-splash.js';
-import { calculateSplash } from '../calculate-splash.js';
-import { resolveSplash, resolveSplashFromRecord } from '../resolve-splash.js';
+import { parseRecord } from '../../parser/parse-record.ts';
+import type { SplashPeak } from '../calculate-splash.ts';
+import { calculateSplash } from '../calculate-splash.ts';
+import { resolveSplash, resolveSplashFromRecord } from '../resolve-splash.ts';
 
 const PEAKS: SplashPeak[] =
   '66.0463:2.1827 105.0698:7.9976 103.0541:4.5676 130.065:8.6025 93.0572:0.2544 79.0542:4.4657 91.0541:2.5671 131.0728:2.6844 115.0541:1.3542 65.0384:0.6554 94.0412:0.5614 116.0494:1.2008 95.049:2.1338 117.0572:100 89.0385:11.7808 77.0385:3.3802 90.0463:35.6373 132.0806:2.343 105.0446:1.771'

@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { expect, test } from 'vitest';
 
-import type { InternalRecord } from '../../../record.js';
-import { SplashRule } from '../splash-rule.js';
+import type { InternalRecord } from '../../../record.ts';
+import { SplashRule } from '../splash-rule.ts';
 
 // Reference vector 1 peaks + its canonical SPLASH.
 const PEAKS =
@@ -23,56 +23,54 @@ function makeRecord(overrides: Partial<InternalRecord>): InternalRecord {
   return { ACCESSION: 'MSBNK-test-TST00001', ...overrides };
 }
 
-describe('SplashRule', () => {
-  const rule = new SplashRule();
+const rule = new SplashRule();
 
-  it('produces no error when PK$SPLASH matches the peaks', async () => {
-    const record = makeRecord({ PK$PEAK: PEAKS, PK$SPLASH: CORRECT_SPLASH });
-    const errors = await rule.validate(record, '', 'file.txt', {});
+test('produces no error when PK$SPLASH matches the peaks', async () => {
+  const record = makeRecord({ PK$PEAK: PEAKS, PK$SPLASH: CORRECT_SPLASH });
+  const errors = await rule.validate(record, '', 'file.txt', {});
 
-    expect(errors).toStrictEqual([]);
+  expect(errors).toStrictEqual([]);
+});
+
+test('produces a blocking splash error when PK$SPLASH does not match', async () => {
+  const record = makeRecord({ PK$PEAK: PEAKS, PK$SPLASH: WRONG_SPLASH });
+  const errors = await rule.validate(record, '', 'file.txt', {});
+
+  expect(errors).toHaveLength(1);
+  expect(errors[0]?.type).toBe('splash');
+  expect(errors[0]?.message).toContain(CORRECT_SPLASH);
+});
+
+test('skips (no error) when there is no PK$SPLASH', async () => {
+  const record = makeRecord({ PK$PEAK: PEAKS });
+
+  await expect(
+    rule.validate(record, '', 'file.txt', {}),
+  ).resolves.toStrictEqual([]);
+});
+
+test('skips (no error) when there are no peaks', async () => {
+  const record = makeRecord({ PK$PEAK: [], PK$SPLASH: CORRECT_SPLASH });
+
+  await expect(
+    rule.validate(record, '', 'file.txt', {}),
+  ).resolves.toStrictEqual([]);
+});
+
+test('skips (does not throw) when peaks are unhashable (all-zero intensity)', async () => {
+  const record = makeRecord({
+    PK$SPLASH: CORRECT_SPLASH,
+    PK$PEAK: [
+      { mz: 100, intensity: 0, relativeIntensity: 0 },
+      { mz: 200, intensity: 0, relativeIntensity: 0 },
+    ],
   });
 
-  it('produces a blocking splash error when PK$SPLASH does not match', async () => {
-    const record = makeRecord({ PK$PEAK: PEAKS, PK$SPLASH: WRONG_SPLASH });
-    const errors = await rule.validate(record, '', 'file.txt', {});
+  await expect(
+    rule.validate(record, '', 'file.txt', {}),
+  ).resolves.toStrictEqual([]);
+});
 
-    expect(errors).toHaveLength(1);
-    expect(errors[0]?.type).toBe('splash');
-    expect(errors[0]?.message).toContain(CORRECT_SPLASH);
-  });
-
-  it('skips (no error) when there is no PK$SPLASH', async () => {
-    const record = makeRecord({ PK$PEAK: PEAKS });
-
-    await expect(
-      rule.validate(record, '', 'file.txt', {}),
-    ).resolves.toStrictEqual([]);
-  });
-
-  it('skips (no error) when there are no peaks', async () => {
-    const record = makeRecord({ PK$PEAK: [], PK$SPLASH: CORRECT_SPLASH });
-
-    await expect(
-      rule.validate(record, '', 'file.txt', {}),
-    ).resolves.toStrictEqual([]);
-  });
-
-  it('skips (does not throw) when peaks are unhashable (all-zero intensity)', async () => {
-    const record = makeRecord({
-      PK$SPLASH: CORRECT_SPLASH,
-      PK$PEAK: [
-        { mz: 100, intensity: 0, relativeIntensity: 0 },
-        { mz: 200, intensity: 0, relativeIntensity: 0 },
-      ],
-    });
-
-    await expect(
-      rule.validate(record, '', 'file.txt', {}),
-    ).resolves.toStrictEqual([]);
-  });
-
-  it('produces no warnings', () => {
-    expect(rule.getWarnings()).toStrictEqual([]);
-  });
+test('produces no warnings', () => {
+  expect(rule.getWarnings()).toStrictEqual([]);
 });

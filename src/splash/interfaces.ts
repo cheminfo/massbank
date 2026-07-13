@@ -1,6 +1,6 @@
-import type { InternalRecord } from '../record.js';
+import type { InternalRecord } from '../record.ts';
 
-import type { SplashPeak } from './calculate-splash.js';
+import type { SplashPeak } from './calculate-splash.ts';
 
 /**
  * Interface for SPLASH calculation and validation

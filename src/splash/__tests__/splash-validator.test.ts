@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { expect, test } from 'vitest';
 
-import type { InternalRecord } from '../../record.js';
-import { calculateSplash } from '../calculate-splash.js';
-import { createSplashValidator } from '../splash-validator.js';
+import type { InternalRecord } from '../../record.ts';
+import { calculateSplash } from '../calculate-splash.ts';
+import { createSplashValidator } from '../splash-validator.ts';
 
 // Reference vector 1 peaks + its canonical SPLASH.
 const PEAKS =
@@ -23,56 +23,54 @@ function makeRecord(overrides: Partial<InternalRecord>): InternalRecord {
   return { ACCESSION: 'MSBNK-test-TST00001', ...overrides };
 }
 
-describe('SplashValidator (local, offline)', () => {
-  it('calculate() matches the standalone calculateSplash', async () => {
-    const validator = createSplashValidator();
+test('calculate() matches the standalone calculateSplash', async () => {
+  const validator = createSplashValidator();
 
-    await expect(validator.calculate(PEAKS)).resolves.toBe(
-      await calculateSplash(PEAKS),
-    );
+  await expect(validator.calculate(PEAKS)).resolves.toBe(
+    await calculateSplash(PEAKS),
+  );
+});
+
+test('validate() returns true for a record whose PK$SPLASH is correct', async () => {
+  const validator = createSplashValidator();
+  const record = makeRecord({ PK$PEAK: PEAKS, PK$SPLASH: CORRECT_SPLASH });
+
+  await expect(validator.validate(record)).resolves.toBe(true);
+});
+
+test('validate() returns false when PK$SPLASH is tampered (no fail-open)', async () => {
+  const validator = createSplashValidator();
+  const record = makeRecord({
+    PK$PEAK: PEAKS,
+    PK$SPLASH: 'splash10-0000-0000000000-0000000000000000000a',
   });
 
-  it('validate() returns true for a record whose PK$SPLASH is correct', async () => {
-    const validator = createSplashValidator();
-    const record = makeRecord({ PK$PEAK: PEAKS, PK$SPLASH: CORRECT_SPLASH });
+  await expect(validator.validate(record)).resolves.toBe(false);
+});
 
-    await expect(validator.validate(record)).resolves.toBe(true);
+test('validate() skips (returns true) when there is no PK$SPLASH', async () => {
+  const validator = createSplashValidator();
+  const record = makeRecord({ PK$PEAK: PEAKS });
+
+  await expect(validator.validate(record)).resolves.toBe(true);
+});
+
+test('validate() skips (returns true) when there are no peaks', async () => {
+  const validator = createSplashValidator();
+  const record = makeRecord({ PK$PEAK: [], PK$SPLASH: CORRECT_SPLASH });
+
+  await expect(validator.validate(record)).resolves.toBe(true);
+});
+
+test('validate() returns true (does not throw) for unhashable peaks', async () => {
+  const validator = createSplashValidator();
+  const record = makeRecord({
+    PK$SPLASH: CORRECT_SPLASH,
+    PK$PEAK: [
+      { mz: 100, intensity: 0, relativeIntensity: 0 },
+      { mz: 200, intensity: 0, relativeIntensity: 0 },
+    ],
   });
 
-  it('validate() returns false when PK$SPLASH is tampered (no fail-open)', async () => {
-    const validator = createSplashValidator();
-    const record = makeRecord({
-      PK$PEAK: PEAKS,
-      PK$SPLASH: 'splash10-0000-0000000000-0000000000000000000a',
-    });
-
-    await expect(validator.validate(record)).resolves.toBe(false);
-  });
-
-  it('validate() skips (returns true) when there is no PK$SPLASH', async () => {
-    const validator = createSplashValidator();
-    const record = makeRecord({ PK$PEAK: PEAKS });
-
-    await expect(validator.validate(record)).resolves.toBe(true);
-  });
-
-  it('validate() skips (returns true) when there are no peaks', async () => {
-    const validator = createSplashValidator();
-    const record = makeRecord({ PK$PEAK: [], PK$SPLASH: CORRECT_SPLASH });
-
-    await expect(validator.validate(record)).resolves.toBe(true);
-  });
-
-  it('validate() returns true (does not throw) for unhashable peaks', async () => {
-    const validator = createSplashValidator();
-    const record = makeRecord({
-      PK$SPLASH: CORRECT_SPLASH,
-      PK$PEAK: [
-        { mz: 100, intensity: 0, relativeIntensity: 0 },
-        { mz: 200, intensity: 0, relativeIntensity: 0 },
-      ],
-    });
-
-    await expect(validator.validate(record)).resolves.toBe(true);
-  });
+  await expect(validator.validate(record)).resolves.toBe(true);
 });

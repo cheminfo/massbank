@@ -1,4 +1,4 @@
-import type { ParseError } from '../types.js';
+import type { ParseError } from '../types.ts';
 
 /**
  * Exception thrown when parsing fails

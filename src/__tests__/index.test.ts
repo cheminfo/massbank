@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
 
-import { validate, validateContent } from '../index.js';
-import { parseRecord } from '../parser/index.js';
+import { validate, validateContent } from '../index.ts';
+import { parseRecord } from '../parser/index.ts';
 
 test('should parse records internally', () => {
   const record = parseRecord('ACCESSION: TEST\n//');

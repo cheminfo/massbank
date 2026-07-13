@@ -1,10 +1,10 @@
 import type { TextData } from 'cheminfo-types';
 import { ensureString } from 'ensure-string';
 
-import { parseRecord } from '../parser/parse-record.js';
+import { parseRecord } from '../parser/parse-record.ts';
 
-import type { SplashPeak } from './calculate-splash.js';
-import { calculateSplash } from './calculate-splash.js';
+import type { SplashPeak } from './calculate-splash.ts';
+import { calculateSplash } from './calculate-splash.ts';
 
 /**
  * Outcome of reconciling a declared SPLASH against the canonical one computed

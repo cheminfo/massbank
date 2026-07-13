@@ -1,6 +1,6 @@
-import type { InternalRecord } from '../../record.js';
-import type { ValidationError, ValidationWarning } from '../../types.js';
-import type { IValidationRule, ValidationRuleOptions } from '../interfaces.js';
+import type { InternalRecord } from '../../record.ts';
+import type { ValidationError, ValidationWarning } from '../../types.ts';
+import type { IValidationRule, ValidationRuleOptions } from '../interfaces.ts';
 
 /**
  * Get the filename from a path (browser-compatible alternative to path.basename)

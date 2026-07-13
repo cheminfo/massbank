@@ -1,6 +1,6 @@
-import type { InternalRecord } from '../record.js';
+import type { InternalRecord } from '../record.ts';
 
-import type { IFieldParser } from './interfaces.js';
+import type { IFieldParser } from './interfaces.ts';
 
 /**
  * Base class for field parsers

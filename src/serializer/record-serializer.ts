@@ -1,6 +1,6 @@
-import type { InternalRecord } from '../record.js';
+import type { InternalRecord } from '../record.ts';
 
-import type { IRecordSerializer } from './interfaces.js';
+import type { IRecordSerializer } from './interfaces.ts';
 
 /**
  * Serializes MassBank records to string format
@@ -13,10 +13,9 @@ export class RecordSerializer implements IRecordSerializer {
    * @param record
    */
   serialize(record: InternalRecord): string {
-    const lines: string[] = [];
+    const lines: string[] = [`ACCESSION: ${record.ACCESSION}`];
 
     // Header fields - DEPRECATED must come right after ACCESSION
-    lines.push(`ACCESSION: ${record.ACCESSION}`);
     if (record.DEPRECATED) {
       lines.push(`DEPRECATED: ${record.DEPRECATED}`);
     }

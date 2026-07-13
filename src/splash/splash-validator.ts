@@ -1,8 +1,8 @@
-import type { InternalRecord } from '../record.js';
+import type { InternalRecord } from '../record.ts';
 
-import type { SplashPeak } from './calculate-splash.js';
-import { calculateSplash } from './calculate-splash.js';
-import type { ISplashValidator } from './interfaces.js';
+import type { SplashPeak } from './calculate-splash.ts';
+import { calculateSplash } from './calculate-splash.ts';
+import type { ISplashValidator } from './interfaces.ts';
 
 /**
  * SPLASH validator backed by the local, offline {@link calculateSplash}.

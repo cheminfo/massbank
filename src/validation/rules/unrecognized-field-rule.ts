@@ -1,6 +1,6 @@
-import type { InternalRecord } from '../../record.js';
-import type { ValidationWarning } from '../../types.js';
-import type { IValidationRule, ValidationRuleOptions } from '../interfaces.js';
+import type { InternalRecord } from '../../record.ts';
+import type { ValidationWarning } from '../../types.ts';
+import type { IValidationRule, ValidationRuleOptions } from '../interfaces.ts';
 
 /**
  * Validation rule that warns about unrecognized fields

@@ -1,7 +1,7 @@
-import { PositionUtils } from '../../parser/index.js';
-import type { InternalRecord } from '../../record.js';
-import type { ValidationError, ValidationWarning } from '../../types.js';
-import type { IValidationRule, ValidationRuleOptions } from '../interfaces.js';
+import { PositionUtils } from '../../parser/index.ts';
+import type { InternalRecord } from '../../record.ts';
+import type { ValidationError, ValidationWarning } from '../../types.ts';
+import type { IValidationRule, ValidationRuleOptions } from '../interfaces.ts';
 
 /**
  * Pattern for allowed characters (from Java Validator).

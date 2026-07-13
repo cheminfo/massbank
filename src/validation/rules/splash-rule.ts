@@ -1,7 +1,7 @@
-import type { InternalRecord } from '../../record.js';
-import { calculateSplash } from '../../splash/calculate-splash.js';
-import type { ValidationError, ValidationWarning } from '../../types.js';
-import type { IValidationRule, ValidationRuleOptions } from '../interfaces.js';
+import type { InternalRecord } from '../../record.ts';
+import { calculateSplash } from '../../splash/calculate-splash.ts';
+import type { ValidationError, ValidationWarning } from '../../types.ts';
+import type { IValidationRule, ValidationRuleOptions } from '../interfaces.ts';
 
 /**
  * Validates that a record's `PK$SPLASH` matches the SPLASH computed locally from

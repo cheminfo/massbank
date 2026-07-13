@@ -3,9 +3,9 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { parseRecord } from '../../parser/parse-record.js';
-import type { SplashPeak } from '../calculate-splash.js';
-import { calculateSplash } from '../calculate-splash.js';
+import { parseRecord } from '../../parser/parse-record.ts';
+import type { SplashPeak } from '../calculate-splash.ts';
+import { calculateSplash } from '../calculate-splash.ts';
 
 /**
  * Dev-only differential check: compute each record's SPLASH locally AND via the

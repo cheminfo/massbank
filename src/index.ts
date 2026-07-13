@@ -14,4 +14,4 @@ export type {
   ValidationOptions,
   ValidationResult,
   ValidationWarning,
-} from './types.js';
+} from './types.ts';

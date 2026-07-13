@@ -3,9 +3,9 @@ import type {
   AnnotationWithOriginal,
   InternalRecord,
   PeakWithOriginal,
-} from '../record.js';
+} from '../record.ts';
 
-import type { ITableParser } from './interfaces.js';
+import type { ITableParser } from './interfaces.ts';
 
 /**
  * Base class for table parsers

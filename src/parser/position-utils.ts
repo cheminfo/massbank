@@ -1,4 +1,4 @@
-import type { ParseError } from '../types.js';
+import type { ParseError } from '../types.ts';
 
 /**
  * Utility functions for position calculations
@@ -68,7 +68,7 @@ export const PositionUtils = {
     const clampedPosition = Math.max(0, Math.min(position, text.length));
 
     // Delegate to getLineColumn to avoid duplicating logic
-    const { line, column } = this.getLineColumn(text, clampedPosition);
+    const { line, column } = PositionUtils.getLineColumn(text, clampedPosition);
 
     return {
       position: clampedPosition,

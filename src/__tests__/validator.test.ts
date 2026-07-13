@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { validate, validateContent } from '../index.js';
+import { validate, validateContent } from '../index.ts';
 
 describe('MassBankValidator', () => {
   it('should validate a single file successfully', async () => {
