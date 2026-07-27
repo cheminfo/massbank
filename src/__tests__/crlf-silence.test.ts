@@ -31,6 +31,9 @@ describe('CRLF handling (K-1)', () => {
     const crlf = RECORD.replaceAll('\n', '\r\n');
     const result = await validateContent(crlf, 'MSBNK-Test-TST00001.txt');
 
+    // `warnings` is also `[]` when the parse fails outright, so assert the parse
+    // actually succeeded before relying on the absence of the warning.
+    expect(result.success).toBe(true);
     expect(
       result.warnings.filter((w) => /non[- ]standard/i.test(w.message)),
     ).toHaveLength(0);
@@ -43,9 +46,11 @@ describe('CRLF handling (K-1)', () => {
       'MSBNK-Test-TST00001.txt',
     );
 
+    expect(lf.success).toBe(true);
     expect(crlf.success).toBe(lf.success);
     expect(crlf.errors.map((e) => e.type)).toStrictEqual(
       lf.errors.map((e) => e.type),
     );
+    expect(crlf.warnings).toStrictEqual(lf.warnings);
   });
 });

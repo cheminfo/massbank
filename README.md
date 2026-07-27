@@ -71,9 +71,9 @@ The validator performs the following checks:
 3. **Unrecognized Fields** - Warns about unrecognized field names (helps catch typos like `RECRD_TITLE` instead of `RECORD_TITLE`)
 4. **Non-Standard Characters** - Warns about non-standard ASCII characters (non-blocking)
 5. **Serialization Round-Trip** - Ensures parse → serialize → compare matches exactly (guarantees no data loss)
-6. **SPLASH Verification** - Recomputes the peak-list SPLASH hash locally (offline, no network call) and compares it to the declared `PK$SPLASH`; a mismatch is a blocking error. Skipped when a record has no `PK$SPLASH` or no peaks.
+6. **SPLASH Verification** - Recomputes the peak-list SPLASH hash locally (offline, no network call) and compares it to the declared `PK$SPLASH`; a mismatch is a blocking error. Skipped when a record has no `PK$SPLASH`, has no peaks, or has a peak list that can't be hashed (degenerate/unhashable peak data — such a record is still caught by the serialization round-trip check).
 
-As of v0.4.1, records whose annotation values contain a colon — lipid nomenclature such as `[lyso_PC(alkyl-18:0,-)]-`, common in metabolomics MassBank data — now parse and round-trip correctly instead of being wrongly rejected. Because warnings are only computed after a successful parse, a record that previously failed to parse may now surface warnings it never had the chance to emit before.
+Records whose annotation values contain a colon — lipid nomenclature such as `[lyso_PC(alkyl-18:0,-)]-`, common in metabolomics MassBank data — now parse and round-trip correctly instead of being wrongly rejected. Because warnings are only computed after a successful parse, a record that previously failed to parse may now surface warnings it never had the chance to emit before.
 
 ## API Reference
 
@@ -127,7 +127,7 @@ This library enforces MassBank format 2.6.0 standards, including:
 ## Requirements
 
 - Node.js 20+ (see `engines` in `package.json`)
-- Runtime dependencies: `camelcase`, `ensure-string` (optional `fifo-logger` for logging)
+- Runtime dependencies: `camelcase`, `ensure-string`. `fifo-logger` is a type-only import (`ValidationOptions.logger`) — install it yourself if you pass a logger, otherwise it isn't required.
 
 ## License
 

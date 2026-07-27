@@ -24,6 +24,11 @@
  * lines. `startsNewField` implies the line contains a colon, so this predicate is
  * strictly narrower than the old `includes(':')` check it replaced — a table can
  * only grow, never shrink.
+ *
+ * Trade-off: a malformed key containing `-` or `.` (e.g. `MS$FOCUSED-ION:`) no
+ * longer ends the table and is swallowed by the row parser; `SerializationRule`
+ * still rejects such a record, so nothing is silently accepted — only the
+ * diagnostic is less precise.
  */
 export const FIELD_LINE_STRICT = /^[A-Z][A-Z0-9_$]*:/;
 
