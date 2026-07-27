@@ -8,6 +8,27 @@ import type {
 import type { ITableParser } from './interfaces.js';
 
 /**
+ * Matches the start of a new record field: an upper-case key (which may contain `_` or
+ * `$`) immediately followed by a colon — `PK$NUM_PEAK:`, `RECORD_TITLE:`, `CH$NAME:`.
+ *
+ * Table rows must NOT be terminated on a bare `:`. Annotation values legitimately
+ * contain colons — lipid nomenclature such as `[lyso_PC(alkyl-18:0,-)]-` is common
+ * throughout MassBank. Breaking on any colon truncated the table, pushed the remaining
+ * rows into the field parser as "unrecognized field", and made the round-trip check
+ * reject officially published records (e.g. MSBNK-Chubu_Univ-UT001074).
+ *
+ * Peak and annotation rows always begin with a numeric m/z, so they can never match.
+ * Trade-off: a malformed key containing `-` or `.` (`MS$FOCUSED-ION:`) no longer ends
+ * the table and is swallowed by the row parser. SerializationRule still rejects such a
+ * record, so nothing is silently accepted — only the diagnostic is less precise.
+ */
+const FIELD_LINE_PATTERN = /^[A-Z][A-Z0-9_$]*:/;
+
+function startsNewField(trimmedLine: string): boolean {
+  return FIELD_LINE_PATTERN.test(trimmedLine);
+}
+
+/**
  * Base class for table parsers
  */
 abstract class BaseTableParser implements ITableParser {
@@ -45,8 +66,8 @@ export class PeakTableParser extends BaseTableParser {
       if (!line || line === '//') {
         break;
       }
-      // Check if this is a new key-value pair (next section)
-      if (line.includes(':')) {
+      // Stop at the next record field, not at any colon (see FIELD_LINE_PATTERN).
+      if (startsNewField(line)) {
         break;
       }
       const peak = this.parsePeakLine(line);
@@ -129,8 +150,8 @@ export class AnnotationTableParser extends BaseTableParser {
       if (!line || line === '//') {
         break;
       }
-      // Check if this is a new key-value pair (next section)
-      if (line.includes(':')) {
+      // Stop at the next record field, not at any colon (see FIELD_LINE_PATTERN).
+      if (startsNewField(line)) {
         break;
       }
       const annotation = this.parseAnnotationLine(line);
