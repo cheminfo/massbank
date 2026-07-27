@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { parseRecord } from '../parser/parse-record.js';
+import { PeakTableParser } from '../parser/table-parsers.js';
+import type { InternalRecord } from '../record.js';
 import { serializeRecord } from '../serializer/record-serializer.js';
 
 // Lipid nomenclature puts a colon inside an annotation value. Terminating the table on
@@ -48,5 +50,21 @@ describe('table parsers with colons inside values', () => {
 
   it('round-trips exactly, so SerializationRule cannot reject it', () => {
     expect(serializeRecord(parseRecord(RECORD))).toBe(RECORD);
+  });
+});
+
+describe('PeakTableParser with a malformed non-numeric row', () => {
+  it('does not treat a stray colon line as ending the table early', () => {
+    const record: InternalRecord = { ACCESSION: '' };
+    const lines = [
+      '  100.0 1.0 999',
+      '  junk:x',
+      '  200.0 2.0 999',
+      'PK$NUM_PEAK: 2',
+    ];
+
+    new PeakTableParser().parse('PK$PEAK', lines, 0, record);
+
+    expect(record.PK$PEAK).toHaveLength(2); // 1 without the fix
   });
 });

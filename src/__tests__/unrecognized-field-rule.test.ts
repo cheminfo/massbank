@@ -57,4 +57,26 @@ RECORD_TITLE: Test
 
     expect(errors).toHaveLength(0);
   });
+
+  it('does not treat a table row containing a colon as a field', () => {
+    const text = `ACCESSION: TEST
+PK$ANNOTATION: m/z num type
+  494.35 1 [lyso_PC(alkyl-18:0,-)]-
+//`;
+
+    const warnings = rule.getWarnings(dummyRecord, text, 'test.txt');
+
+    expect(warnings).toHaveLength(0);
+  });
+
+  it('still reports a mis-cased field key', () => {
+    const text = `ACCESSION: TEST
+record_title: lower case key
+//`;
+
+    const warnings = rule.getWarnings(dummyRecord, text, 'test.txt');
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.message).toContain('record_title');
+  });
 });

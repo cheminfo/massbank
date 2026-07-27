@@ -1,3 +1,4 @@
+import { matchFieldKey } from '../../parser/field-line.js';
 import type { InternalRecord } from '../../record.js';
 import type { ValidationWarning } from '../../types.js';
 import type { IValidationRule, ValidationRuleOptions } from '../interfaces.js';
@@ -80,12 +81,20 @@ export class UnrecognizedFieldRule implements IValidationRule {
         continue;
       }
 
-      const colonIndex = line.indexOf(':');
-      if (colonIndex === -1) {
+      // A field key — letters, digits, `_`, `$`, no spaces — followed immediately by
+      // a colon (see ../../parser/field-line.ts). Matching the first colon anywhere
+      // instead misreads table rows whose values contain colons:
+      // `494.35 1 [lyso_PC(alkyl-18:0,-)]-` produced a bogus
+      // "Unrecognized field '494.35 1 [lyso_PC(alkyl-18'" on published records.
+      //
+      // The leading letter is matched case-insensitively on purpose: a mis-cased
+      // key such as `record_title:` is exactly the typo this rule exists to
+      // report. Table rows always start with a numeric m/z, so they can never
+      // match.
+      const key = matchFieldKey(line);
+      if (key === null) {
         continue;
       }
-
-      const key = line.slice(0, colonIndex).trim();
 
       // Check if this is an unrecognized field
       if (!this.recognizedFields.has(key)) {
