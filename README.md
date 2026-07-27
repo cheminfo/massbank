@@ -71,6 +71,9 @@ The validator performs the following checks:
 3. **Unrecognized Fields** - Warns about unrecognized field names (helps catch typos like `RECRD_TITLE` instead of `RECORD_TITLE`)
 4. **Non-Standard Characters** - Warns about non-standard ASCII characters (non-blocking)
 5. **Serialization Round-Trip** - Ensures parse → serialize → compare matches exactly (guarantees no data loss)
+6. **SPLASH Verification** - Recomputes the peak-list SPLASH hash locally (offline, no network call) and compares it to the declared `PK$SPLASH`; a mismatch is a blocking error. Skipped when a record has no `PK$SPLASH` or no peaks.
+
+As of v0.4.1, records whose annotation values contain a colon — lipid nomenclature such as `[lyso_PC(alkyl-18:0,-)]-`, common in metabolomics MassBank data — now parse and round-trip correctly instead of being wrongly rejected. Because warnings are only computed after a successful parse, a record that previously failed to parse may now surface warnings it never had the chance to emit before.
 
 ## API Reference
 
@@ -116,14 +119,15 @@ This library enforces MassBank format 2.6.0 standards, including:
 - **ACCESSION format:** `MSBNK-[ContributorID]-[RecordID]`
   - Contributor ID: up to 32 characters (letters, digits, underscore)
   - Record ID: up to 64 characters (capital letters, digits, underscore)
+  - Shown for reference; this structure is not itself validated — only that ACCESSION matches the filename (see Validation Rules above)
 - **Filename matching:** File must be named `{ACCESSION}.txt`
-- **Required fields:** ACCESSION, RECORD_TITLE, DATE, AUTHORS, LICENSE, and more
-- **SPLASH validation:** Optional spectral hash validation via API
+- **Required fields:** ACCESSION (parsing fails without it); RECORD_TITLE, DATE, AUTHORS, LICENSE, and other format fields are not currently enforced as mandatory by this library
+- **SPLASH validation:** Local, offline recomputation of the peak-list SPLASH hash, compared against the declared `PK$SPLASH` (no network call)
 
 ## Requirements
 
-- Node.js 18+ (for native fetch support in SPLASH validation)
-- No external runtime dependencies (only optional `fifo-logger`)
+- Node.js 20+ (see `engines` in `package.json`)
+- Runtime dependencies: `camelcase`, `ensure-string` (optional `fifo-logger` for logging)
 
 ## License
 
