@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/cheminfo/massbank/compare/v0.4.0...v0.4.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* identify field lines by key shape, not first colon ([c404000](https://github.com/cheminfo/massbank/commit/c404000504962a009e9b9c520c607e715dd2950b))
+* keep table rows whose values contain colons ([dcbb2fe](https://github.com/cheminfo/massbank/commit/dcbb2fed569f488f27dab42d28ac9673b811af1f))
+
 ## [0.4.0](https://github.com/cheminfo/massbank/compare/v0.3.0...v0.4.0) (2026-06-20)
 
 
