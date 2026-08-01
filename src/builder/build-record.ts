@@ -116,8 +116,13 @@ function wasAnnotationRowEdited(row: AnnotationWithOriginal): boolean {
  * never mapped into any typed field. table-parsers.ts's per-token-count
  * branches are positional, and not every branch accounts for every token:
  *
- * - 1, 2, or 4 tokens always map every token into a field, unconditionally:
+ * - 1, 2, or 4 tokens always assign every token to a field, unconditionally:
  *   `[mz]`, `[mz, annotation]`, or `[mz, annotation, exactMass, errorPpm]`.
+ *   That is assignment, not validity: a non-numeric token landing in
+ *   `exactMass`/`errorPpm` becomes `NaN` rather than being dropped, so this
+ *   check sees no missing column — e.g. `"100.25 [M+H]+ notanumber alsonot"`
+ *   assigns all 4 tokens. Such a row is still rejected, just by
+ *   `checkAnnotationFiniteValues` catching the `NaN`, not by this check.
  * - 3 tokens map all 3 only when the THIRD token looks numeric (read as
  *   `[mz, exactMass, errorPpm]` or `[mz, annotation, exactMass]`, depending
  *   on the second token). When the third token does not look numeric, the

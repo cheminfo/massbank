@@ -118,6 +118,7 @@ Records whose annotation values contain a colon — lipid nomenclature such as `
 - Derives `PK$NUM_PEAK` from the sorted peak count — a draft-supplied value is discarded.
 - Recomputes `PK$SPLASH` from the sorted peaks — a stale declared value is discarded, because a wrong SPLASH breaks cross-database matching silently, which is worse than a missing one.
 - **Always strips `_original` from peaks**, so the serializer can't fall back to stale round-trip text under a freshly recomputed `PK$SPLASH` — a peak's `_original` feeds that hash, so printing it verbatim could disagree with it.
+- **Peaks have the same discarded-column hazard as `PK$ANNOTATION` (see below), but no guard against it.** The peak parser only reads the first three tokens (`mz`, `intensity`, `relativeIntensity`); a fourth token on a source row is silently dropped at parse time, and a non-numeric third token becomes `relativeIntensity: 0` with its real text surviving only in `_original.relativeIntensity`. A source row `100 999 abc` parses to `relativeIntensity: 0` with `_original.relativeIntensity: "abc"` — plain `serializeRecord` reprints `abc` byte-exactly, but `buildRecord` reprints `0`, because the bullet above always strips a peak's `_original`. Unlike `PK$ANNOTATION`, this cannot be fixed by preserving `_original` instead — a peak's `_original` feeds `PK$SPLASH`, so keeping it around risks the same staleness the strip above exists to prevent. This is a documentation note, not a guard: nothing currently rejects it.
 - **Keeps `_original` on annotation rows (and the table's `_PK$ANNOTATION_HEADER`) when the whole table round-trips unedited**, and discards both, table-wide, the moment any row's fields diverge from what its own `_original` reparses to. An annotation row never feeds `PK$SPLASH`, so — unlike peaks — there is no staleness risk in printing an unedited row's real source text verbatim, column count and all. This is what lets `buildRecord(parseRecord(file))` round-trip a real MassBank PK$ANNOTATION table with more than 4 columns (see the next bullet) instead of rejecting it outright. Editing even one row falls back to rebuilding every row from typed fields under a fresh canonical header (`m/z annotation exact_mass error(ppm)`), since a parsed source's custom header (e.g. `m/z tentative_formula formula_count mass error(ppm)`) no longer describes rebuilt rows.
 - Drops an empty `PK$PEAK` or `PK$ANNOTATION` table, keeping the returned object's shape consistent with the `PK$NUM_PEAK`/`PK$SPLASH` deletes below rather than carrying an empty array. An empty peak list is **dropped, not hashed** — it never reaches the SPLASH computation and never throws.
 - Drops `PK$NUM_PEAK` and `PK$SPLASH` when there are no peaks, so a stale count or hash can't survive a peakless draft.
@@ -155,14 +156,26 @@ try {
     PK$ANNOTATION: [{ mz: 100.25, exactMass: 194.0804 }],
   });
 } catch (error) {
-  // RangeError: PK$ANNOTATION row 0 (mz 100.25): exactMass is set without annotation or errorPpm. ...
+  // BuildException: PK$ANNOTATION[0]: PK$ANNOTATION row 0 (mz 100.25): exactMass is set without annotation or errorPpm. ...
 }
 
-// An all-zero, negative, or non-finite spectrum can't be hashed, so
-// buildRecord throws instead of silently producing a record with no PK$SPLASH.
-// (A negative mz throws too, via a different guard, with a message that
-// reads as "empty or all-zero-intensity" even though the spectrum may be
-// neither.)
+// A negative mz is rejected outright: it isn't a real peak position, and
+// calculateSplash's histogram binning would otherwise alias it onto the same
+// bin as a small non-negative mz instead of catching it.
+try {
+  await buildRecord({
+    ACCESSION: 'MSBNK-test-TST00001',
+    PK$PEAK: [{ mz: -50, intensity: 100, relativeIntensity: 999 }],
+  });
+} catch (error) {
+  // BuildException: PK$PEAK[0].mz: PK$PEAK row 0 (mz -50): mz is negative. ...
+}
+
+// An all-zero, negative-intensity, or non-finite spectrum can't be hashed, so
+// buildRecord throws instead of silently producing a record with no
+// PK$SPLASH. This is a plain RangeError from calculateSplash itself, raised
+// separately from BuildException because it can only be detected once every
+// BuildException guard above has already passed.
 try {
   await buildRecord({
     ACCESSION: 'MSBNK-test-TST00001',
@@ -177,10 +190,8 @@ try {
 
 Two limits are worth knowing:
 
-1. **The filename is derived from `ACCESSION`** (as `` `${record.ACCESSION}.txt` ``), because a `MassBankRecord` carries no filename of its own. `AccessionMatchRule` therefore **cannot fail** on this path for any well-formed accession — a green result is not evidence the accession matches any external filename. Use `validate()` or `validateContent()` with the real filename to check that.
+1. **The filename is derived from `ACCESSION`** (as `` `${record.ACCESSION}.txt` ``), because a `MassBankRecord` carries no filename of its own. `AccessionMatchRule` therefore **cannot fail** on this path for an `ACCESSION` with no path separator — a green result is not evidence the accession matches any external filename. An `ACCESSION` containing a path separator (e.g. `foo/bar` or `foo\bar`) still trips the rule against a basename it never saw — a confusing error, not a false pass. Use `validate()` or `validateContent()` with the real filename to check that.
 2. **Mandatory fields and controlled vocabularies are not checked**, same as `validate`/`validateContent` today (see [MassBank Format 2.6.0 Compliance](#massbank-format-260-compliance)). A record containing only `ACCESSION` returns `success: true`. A green result means "round-trips and passes the current rule set," not "submittable to MassBank."
-
-> `validateRecord` is intended to become the strict/submission entry point: new semantic checks (mandatory fields, controlled vocabularies) will land on it first in future releases, ahead of `validate`/`validateContent`. It does not yet enforce anything beyond limit 2 above, and past behavior is not a guarantee of future behavior — a record that validates green today may not once those checks land.
 
 ### Additional exports
 
@@ -243,7 +254,7 @@ Normalize a record draft into a canonical record. See [Builder API](#builder-api
 
 **Returns:** `Promise<MassBankRecord>`
 
-**Throws:** `RangeError` if a non-empty `PK$PEAK` cannot be hashed (all-zero intensity, a negative intensity, a negative `mz`, or a non-finite `mz`/`intensity`); if a peak's `relativeIntensity` is not finite or is negative; if `ACCESSION` contains a newline or carriage return, is empty or whitespace-only, or has leading or trailing whitespace; if any other field the serializer writes verbatim (or an element of an array-valued one) contains a newline; or if a `PK$ANNOTATION` row cannot survive a round-trip (including an _edited_ parsed row whose source columns the parser did not fully map into typed fields — an unedited one builds successfully instead, preserving its real source text) — see [Builder API](#builder-api) above for the full legal/illegal combinations
+**Throws:** `BuildException` if `ACCESSION` contains a newline or carriage return, is empty or whitespace-only, or has leading or trailing whitespace; if any other field the serializer writes verbatim (or an element of an array-valued one) is empty, whitespace-padded, or contains a newline or carriage return; if a peak's `relativeIntensity` is not finite or is negative, or a peak's `mz` is negative; or if a `PK$ANNOTATION` row cannot survive a round-trip (including an _edited_ parsed row whose source columns the parser did not fully map into typed fields — an unedited one builds successfully instead, preserving its real source text) — `error.buildErrors` carries every failure found, not only the first; see [Builder API](#builder-api) above for the full legal/illegal combinations. Separately, **`RangeError`** if a non-empty `PK$PEAK` passes every guard above but still cannot be hashed (all-zero intensity, a negative intensity, or a non-finite `mz`/`intensity`) — thrown by `calculateSplash` itself, after every `BuildException` guard has already passed, so it is never part of `error.buildErrors`.
 
 ### `validateRecord(record, options?)`
 
@@ -271,7 +282,7 @@ This library enforces MassBank format 2.6.0 standards, including:
 ## Requirements
 
 - Node.js 20+ (see `engines` in `package.json`)
-- Runtime dependencies: `camelcase`, `ensure-string`. `fifo-logger` is a type-only import (`ValidationOptions.logger`) — install it yourself if you pass a logger, otherwise it isn't required.
+- Runtime dependencies: `camelcase`, `cheminfo-types`, `ensure-string`, `fifo-logger`. `cheminfo-types` and `fifo-logger` are only ever imported as types (`ValidationOptions.logger` and a few others) — no runtime code from either ships in `lib/` — but they are listed as `dependencies` rather than `devDependencies` because they appear in the package's shipped `.d.ts` files, so a consumer's own type-check needs them resolvable too.
 
 ## License
 
