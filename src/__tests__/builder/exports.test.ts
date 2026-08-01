@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildRecord as deepBuildRecord } from '../../builder/build-record.ts';
+import { BuildException as deepBuildException } from '../../builder/exceptions.ts';
 import { validateRecord as deepValidateRecord } from '../../builder/validate-record.ts';
 import * as massbank from '../../index.ts';
 
@@ -12,6 +13,7 @@ describe('public API surface', () => {
       'serializeRecord',
       'buildRecord',
       'validateRecord',
+      'BuildException',
     ].filter((name) => massbank[name as keyof typeof massbank] === undefined);
 
     expect(missing).toStrictEqual([]);
@@ -79,5 +81,33 @@ describe('the exported builder functions are the real implementations', () => {
     // object than the one it wraps.
     expect(massbank.buildRecord).toBe(deepBuildRecord);
     expect(massbank.validateRecord).toBe(deepValidateRecord);
+  });
+
+  it('BuildException imported from the package root is the exact same class as the deep import', () => {
+    expect(massbank.BuildException).toBe(deepBuildException);
+  });
+
+  it('buildRecord imported from the package root throws the real BuildException with every failure aggregated', async () => {
+    let caught: unknown;
+    try {
+      await massbank.buildRecord({
+        ACCESSION: '',
+        PK$PEAK: [{ mz: -1, intensity: 10, relativeIntensity: -5 }],
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(massbank.BuildException);
+
+    const codes = (
+      caught as InstanceType<typeof massbank.BuildException>
+    ).buildErrors.map((buildError) => buildError.code);
+
+    expect(codes).toStrictEqual([
+      'ACCESSION_EMPTY',
+      'PEAK_INVALID_RELATIVE_INTENSITY',
+      'PEAK_NEGATIVE_MZ',
+    ]);
   });
 });

@@ -7,6 +7,8 @@
 // would leave this guard passing while the public surface is broken.
 import type {
   Annotation,
+  BuildError,
+  BuildErrorCode,
   InternalRecord,
   ParseError,
   Peak,
@@ -23,6 +25,8 @@ import type {
  * @param peak - forces `Peak` to resolve
  * @param draft - forces `RecordDraft` to resolve
  * @param parseError - forces `ParseError` to resolve
+ * @param buildError - forces `BuildError` to resolve
+ * @param buildErrorCode - forces `BuildErrorCode` to resolve
  * @returns the same tuple, unused
  */
 export function assertExported(
@@ -31,6 +35,24 @@ export function assertExported(
   peak: Peak,
   draft: RecordDraft,
   parseError: ParseError,
-): [Annotation, InternalRecord, Peak, RecordDraft, ParseError] {
-  return [annotation, record, peak, draft, parseError];
+  buildError: BuildError,
+  buildErrorCode: BuildErrorCode,
+): [
+  Annotation,
+  InternalRecord,
+  Peak,
+  RecordDraft,
+  ParseError,
+  BuildError,
+  BuildErrorCode,
+] {
+  return [
+    annotation,
+    record,
+    peak,
+    draft,
+    parseError,
+    buildError,
+    buildErrorCode,
+  ];
 }

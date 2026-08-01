@@ -3,7 +3,12 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { buildRecord } from '../../builder/build-record.ts';
+import {
+  VERBATIM_ARRAY_FIELDS,
+  VERBATIM_STRING_FIELDS,
+  buildRecord,
+} from '../../builder/build-record.ts';
+import { BuildException } from '../../builder/exceptions.ts';
 import { validateRecord } from '../../builder/validate-record.ts';
 import { parseRecord } from '../../parser/parse-record.ts';
 import type {
@@ -396,7 +401,7 @@ describe('buildRecord rejects an unsafe relativeIntensity', () => {
           { mz: 100.25, intensity: 100, relativeIntensity: Number.NaN },
         ],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('throws when relativeIntensity is Infinity', async () => {
@@ -411,7 +416,7 @@ describe('buildRecord rejects an unsafe relativeIntensity', () => {
           },
         ],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('throws when relativeIntensity is negative', async () => {
@@ -420,7 +425,7 @@ describe('buildRecord rejects an unsafe relativeIntensity', () => {
         ...minimal(),
         PK$PEAK: [{ mz: 100.25, intensity: 100, relativeIntensity: -1 }],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('names the offending row in the error message', async () => {
@@ -458,7 +463,7 @@ describe('buildRecord rejects a peak mz that would forge a SPLASH', () => {
         ...minimal(),
         PK$PEAK: [{ mz: -50, intensity: 1000, relativeIntensity: 999 }],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('throws when a negative mz peak is mixed with a positive one', async () => {
@@ -473,7 +478,7 @@ describe('buildRecord rejects a peak mz that would forge a SPLASH', () => {
           { mz: 200, intensity: 100, relativeIntensity: 100 },
         ],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('names the offending row in the error message', async () => {
@@ -522,7 +527,7 @@ describe('buildRecord rejects an ACCESSION that could inject header fields', () 
       buildRecord({
         ACCESSION: 'MSBNK-x-1\nAUTHORS: Attacker A',
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('throws when ACCESSION contains a carriage return', async () => {
@@ -530,7 +535,7 @@ describe('buildRecord rejects an ACCESSION that could inject header fields', () 
       buildRecord({
         ACCESSION: 'MSBNK-x-1\rAUTHORS: Attacker A',
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 });
 
@@ -538,11 +543,15 @@ describe('buildRecord rejects an ACCESSION that could not be read back', () => {
   it('throws when ACCESSION is empty', async () => {
     // serializeRecord emits "ACCESSION: ", and parseRecord treats an empty
     // ACCESSION as missing and throws — this could never round-trip.
-    await expect(buildRecord({ ACCESSION: '' })).rejects.toThrow(RangeError);
+    await expect(buildRecord({ ACCESSION: '' })).rejects.toThrow(
+      BuildException,
+    );
   });
 
   it('throws when ACCESSION is whitespace-only', async () => {
-    await expect(buildRecord({ ACCESSION: '   ' })).rejects.toThrow(RangeError);
+    await expect(buildRecord({ ACCESSION: '   ' })).rejects.toThrow(
+      BuildException,
+    );
   });
 
   it('throws when ACCESSION has leading whitespace', async () => {
@@ -550,13 +559,13 @@ describe('buildRecord rejects an ACCESSION that could not be read back', () => {
     // a different string than the one supplied.
     await expect(
       buildRecord({ ACCESSION: '  MSBNK-test-TST00001' }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('throws when ACCESSION has trailing whitespace', async () => {
     await expect(
       buildRecord({ ACCESSION: 'MSBNK-test-TST00001  ' }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('accepts an ACCESSION with no leading or trailing whitespace', async () => {
@@ -566,55 +575,28 @@ describe('buildRecord rejects an ACCESSION that could not be read back', () => {
   });
 });
 
-describe('buildRecord rejects a newline in any field the serializer writes verbatim', () => {
+describe('buildRecord rejects a value that cannot round-trip in any field the serializer writes verbatim', () => {
   // record-serializer.ts writes each of these fields — or, for an
   // array-valued field, each element — onto its own line without escaping.
-  // A newline inside one would inject the text that follows it as forged
-  // lines once the record is reparsed. ACCESSION has its own guard above and
-  // is covered separately; this covers the rest of the verbatim surface.
+  // ACCESSION has its own guard above and is covered separately; this covers
+  // the rest of the verbatim surface. Imported from build-record.ts rather
+  // than hand-copied, so a field added to either list there is automatically
+  // covered here too (see checkVerbatimText's own docstring for how each
+  // check below was derived and measured).
 
-  const stringFields = [
-    'DEPRECATED',
-    'RECORD_TITLE',
-    'DATE',
-    'AUTHORS',
-    'LICENSE',
-    'COPYRIGHT',
-    'PUBLICATION',
-    'PROJECT',
-    'CH$COMPOUND_CLASS',
-    'CH$FORMULA',
-    'CH$EXACT_MASS',
-    'CH$SMILES',
-    'CH$IUPAC',
-    'AC$INSTRUMENT',
-    'AC$INSTRUMENT_TYPE',
-    'SP$SCIENTIFIC_NAME',
-    'SP$LINEAGE',
-    'SP$SAMPLE',
-  ] as const;
+  it.each(VERBATIM_STRING_FIELDS)(
+    'throws when %s contains a newline',
+    async (field) => {
+      await expect(
+        buildRecord({
+          ...minimal(),
+          [field]: 'line one\nCOPYRIGHT: Copyright (C) Attacker',
+        }),
+      ).rejects.toThrow(BuildException);
+    },
+  );
 
-  it.each(stringFields)('throws when %s contains a newline', async (field) => {
-    await expect(
-      buildRecord({
-        ...minimal(),
-        [field]: 'line one\nCOPYRIGHT: Copyright (C) Attacker',
-      }),
-    ).rejects.toThrow(RangeError);
-  });
-
-  const arrayFields = [
-    'COMMENT',
-    'CH$NAME',
-    'CH$LINK',
-    'AC$MASS_SPECTROMETRY',
-    'AC$CHROMATOGRAPHY',
-    'MS$FOCUSED_ION',
-    'MS$DATA_PROCESSING',
-    'SP$LINK',
-  ] as const;
-
-  it.each(arrayFields)(
+  it.each(VERBATIM_ARRAY_FIELDS)(
     'throws when an element of %s contains a newline',
     async (field) => {
       await expect(
@@ -622,7 +604,7 @@ describe('buildRecord rejects a newline in any field the serializer writes verba
           ...minimal(),
           [field]: ['line one\nCOPYRIGHT: Copyright (C) Attacker'],
         }),
-      ).rejects.toThrow(RangeError);
+      ).rejects.toThrow(BuildException);
     },
   );
 
@@ -635,15 +617,92 @@ describe('buildRecord rejects a newline in any field the serializer writes verba
     ).rejects.toThrow(/LICENSE/);
   });
 
-  it('does not reject a bare carriage return with no newline', async () => {
-    // parse-record.ts splits on /\r?\n/ — a bare \r starts no new line, so a
-    // value containing one round-trips unchanged and must not be rejected.
-    const record = await buildRecord({
-      ...minimal(),
-      RECORD_TITLE: 'abc\rdef',
-    });
+  it.each(VERBATIM_STRING_FIELDS)('throws when %s is empty', async (field) => {
+    // record-serializer.ts guards every single-value field with
+    // `if (record.FIELD)`, and `''` is falsy — the field would vanish
+    // entirely on reparse instead of round-tripping.
+    await expect(buildRecord({ ...minimal(), [field]: '' })).rejects.toThrow(
+      BuildException,
+    );
+  });
 
-    expect(record.RECORD_TITLE).toBe('abc\rdef');
+  it('does not reject an empty element of an array-valued field', async () => {
+    // record-serializer.ts's truthiness check guards the array itself, not
+    // each element, so an empty-string element still gets its own
+    // "FIELD: " line and reparses back to '' unchanged.
+    const record = await buildRecord({ ...minimal(), COMMENT: [''] });
+
+    expect(record.COMMENT).toStrictEqual(['']);
+
+    const reparsed = parseRecord(serializeRecord(record));
+
+    expect(reparsed.COMMENT).toStrictEqual(['']);
+  });
+
+  it.each(VERBATIM_STRING_FIELDS)(
+    'throws when %s has leading or trailing whitespace',
+    async (field) => {
+      await expect(
+        buildRecord({ ...minimal(), [field]: '  padded  ' }),
+      ).rejects.toThrow(BuildException);
+    },
+  );
+
+  it.each(VERBATIM_ARRAY_FIELDS)(
+    'throws when an element of %s has leading or trailing whitespace',
+    async (field) => {
+      await expect(
+        buildRecord({ ...minimal(), [field]: ['  padded  '] }),
+      ).rejects.toThrow(BuildException);
+    },
+  );
+
+  // parse-record.ts extracts a field's value with a single `.trim()`, which
+  // strips more than plain spaces. Swept on one representative field —
+  // AUTHORS — since the predicate is the same `value.trim() !== value` test
+  // for every field; the two sweeps above already prove it runs for all 26.
+  const untrimmableValues: Record<string, string> = {
+    'a leading tab': '\tAB',
+    'a trailing tab': 'AB\t',
+    'a leading vertical tab': '\vAB',
+    'a trailing form feed': 'AB\f',
+    'a leading NBSP': ' AB',
+    'a trailing EM SPACE': 'AB ',
+    'a leading BOM': '﻿AB',
+    'all whitespace': '   ',
+  };
+
+  it.each(Object.entries(untrimmableValues))(
+    'throws when AUTHORS has %s',
+    async (_label, value) => {
+      await expect(
+        buildRecord({ ...minimal(), AUTHORS: value }),
+      ).rejects.toThrow(BuildException);
+    },
+  );
+
+  it('throws when AUTHORS contains a trailing carriage return', async () => {
+    // Measured against parse-record.ts: a value's trailing \r sits right up
+    // against the join's own '\n', and .trim() strips \r from either end
+    // regardless — "AB\r" reparses as "AB", silently, with no validation
+    // error from this guard's predecessor. The corrected guard rejects it
+    // like any other untrimmable value.
+    await expect(
+      buildRecord({ ...minimal(), AUTHORS: 'AB\r' }),
+    ).rejects.toThrow(BuildException);
+  });
+
+  it('throws when AUTHORS contains an interior carriage return', async () => {
+    // A bare interior \r (no \n immediately after it) measurably reparses
+    // back to the identical string at the parse-record.ts layer — the line
+    // split regex /\r?\n/ only treats \r as part of a boundary when a \n
+    // immediately follows, and .trim() never touches a middle character.
+    // It is still rejected: validateRecord's SerializationRule normalises
+    // ANY \r to \n before comparing but not on the reserialized side, so a
+    // record built with one is guaranteed to fail that rule every time.
+    await expect(
+      buildRecord({ ...minimal(), AUTHORS: 'A\rB' }),
+    ).rejects.toThrow(BuildException);
   });
 });
 
@@ -660,7 +719,7 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
         ...minimal(),
         PK$ANNOTATION: [{ mz: 100.25, exactMass: 194.0804 }],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('throws when errorPpm is set without annotation or exactMass', async () => {
@@ -669,7 +728,7 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
         ...minimal(),
         PK$ANNOTATION: [{ mz: 100.25, errorPpm: 1.2 }],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('throws when annotation and errorPpm are set without exactMass', async () => {
@@ -678,7 +737,7 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
         ...minimal(),
         PK$ANNOTATION: [{ mz: 100.25, annotation: 'frag', errorPpm: 1.2 }],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('throws when annotation looks numeric in the {annotation, exactMass} shape', async () => {
@@ -689,7 +748,7 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
         ...minimal(),
         PK$ANNOTATION: [{ mz: 100.25, annotation: '194.08', exactMass: 1.2 }],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('throws when a prefix-numeric annotation is set in the {annotation, exactMass} shape', async () => {
@@ -709,7 +768,7 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
           { mz: 100.25, annotation: '5-methyl', exactMass: 194.0804 },
         ],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('throws for a second prefix-numeric annotation shape', async () => {
@@ -721,7 +780,7 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
           { mz: 100.25, annotation: '1,2-dimethyl', exactMass: 194.0804 },
         ],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('throws when annotation is empty', async () => {
@@ -730,7 +789,7 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
         ...minimal(),
         PK$ANNOTATION: [{ mz: 100.25, annotation: '' }],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('throws when annotation is whitespace-only', async () => {
@@ -739,7 +798,7 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
         ...minimal(),
         PK$ANNOTATION: [{ mz: 100.25, annotation: '   ' }],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('throws when annotation contains internal whitespace', async () => {
@@ -748,7 +807,7 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
         ...minimal(),
         PK$ANNOTATION: [{ mz: 100.25, annotation: 'loss of H2O' }],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('throws when annotation has leading or trailing whitespace', async () => {
@@ -763,7 +822,7 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
         ...minimal(),
         PK$ANNOTATION: [{ mz: 100.25, annotation: ' frag' }],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('throws when exactMass is not finite', async () => {
@@ -774,7 +833,7 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
           { mz: 100.25, annotation: 'fragment', exactMass: Number.NaN },
         ],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('throws when errorPpm is not finite', async () => {
@@ -790,7 +849,7 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
           },
         ],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('throws when mz is NaN', async () => {
@@ -802,7 +861,7 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
         ...minimal(),
         PK$ANNOTATION: [{ mz: Number.NaN, annotation: 'fragment' }],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('throws when mz is Infinity', async () => {
@@ -813,7 +872,7 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
           { mz: Number.POSITIVE_INFINITY, annotation: 'fragment' },
         ],
       }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
   });
 
   it('names the offending row in the error message', async () => {
@@ -998,7 +1057,7 @@ describe('buildRecord guards against parser-truncated PK$ANNOTATION columns', ()
 
     await expect(
       buildRecord({ ...parsed, PK$ANNOTATION: edited }),
-    ).rejects.toThrow(RangeError);
+    ).rejects.toThrow(BuildException);
     await expect(
       buildRecord({ ...parsed, PK$ANNOTATION: edited }),
     ).rejects.toThrow(/row 0 .*5 columns/);
@@ -1074,7 +1133,7 @@ PK$ANNOTATION: m/z num type
     }));
     const draft = { ...parsed, PK$ANNOTATION: edited };
 
-    await expect(buildRecord(draft)).rejects.toThrow(RangeError);
+    await expect(buildRecord(draft)).rejects.toThrow(BuildException);
     await expect(buildRecord(draft)).rejects.toThrow(/row 0 .*3 columns/);
   });
 
@@ -1169,7 +1228,7 @@ describe('property: buildRecord PK$ANNOTATION accept/reject matches round-trip r
       async ({ row }) => {
         await expect(
           buildRecord({ ...minimal(), PK$ANNOTATION: [row] }),
-        ).rejects.toThrow(RangeError);
+        ).rejects.toThrow(BuildException);
       },
     );
   });
@@ -1246,7 +1305,7 @@ describe('property: buildRecord PK$ANNOTATION accept/reject matches round-trip r
       async ({ row }) => {
         await expect(
           buildRecord({ ...minimal(), PK$ANNOTATION: [row] }),
-        ).rejects.toThrow(RangeError);
+        ).rejects.toThrow(BuildException);
       },
     );
   });
