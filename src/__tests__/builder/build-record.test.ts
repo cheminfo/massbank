@@ -1,6 +1,10 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { buildRecord } from '../../builder/build-record.ts';
+import { validateRecord } from '../../builder/validate-record.ts';
 import { parseRecord } from '../../parser/parse-record.ts';
 import { serializeRecord } from '../../serializer/record-serializer.ts';
 
@@ -25,6 +29,32 @@ const unsorted = () => [
   { mz: 100.25, intensity: 100, relativeIntensity: 999 },
   { mz: 200, intensity: 50, relativeIntensity: 500 },
 ];
+
+// A row parsed from a real PK$ANNOTATION table with more than 4 columns —
+// the parser keeps only mz and the second token as `annotation`, stashing
+// the rest of the source line in `_original` (table-parsers.ts).
+const fiveColumnRecord = () =>
+  parseRecord(`ACCESSION: MSBNK-test-TST00001
+PK$ANNOTATION: m/z tentative_formula formula_count exact_mass error(ppm)
+  59.0134 C2H3O2- 1 59.0133 2.9
+//
+`);
+
+/**
+ * Drop `_original` from each row so a reparsed table can be compared against
+ * a caller-built one. A text-only round-trip check (`serializeRecord(parseRecord(x))
+ * === x`) is a fixed point of ANY consistent relabelling of the positional
+ * columns — swapping which field a serializer writes first passes it just as
+ * well as the correct order. Comparing the reparsed OBJECT is what actually
+ * proves the data landed in the right fields.
+ * @param rows - the parsed rows to strip
+ * @returns the rows with `_original` removed, in the same order
+ */
+function stripOriginal<T extends { _original?: unknown }>(
+  rows: T[] | undefined,
+): Array<Omit<T, '_original'>> {
+  return (rows ?? []).map(({ _original, ...rest }) => rest);
+}
 
 describe('buildRecord normalises what validation cannot detect', () => {
   it('sorts peaks ascending by m/z', async () => {
@@ -107,6 +137,14 @@ describe('buildRecord normalises what validation cannot detect', () => {
 
     expect(peaks.map((p) => p.mz)).toStrictEqual([300.5, 100.25, 200]);
     expect(draft.PK$NUM_PEAK).toBe(99);
+  });
+
+  it('does not mutate the input annotation array', async () => {
+    const annotations = [{ mz: 200 }, { mz: 100.25 }];
+    const draft = { ...minimal(), PK$ANNOTATION: annotations };
+    await buildRecord(draft);
+
+    expect(annotations.map((a) => a.mz)).toStrictEqual([200, 100.25]);
   });
 
   it('strips _original so the serializer cannot print stale text', async () => {
@@ -195,6 +233,86 @@ describe('buildRecord normalises what validation cannot detect', () => {
     const rebuilt = await buildRecord(parsed);
 
     expect(rebuilt._PK$ANNOTATION_HEADER).toBeUndefined();
+  });
+});
+
+describe('buildRecord rejects an unsafe relativeIntensity', () => {
+  // relativeIntensity never reaches calculateSplash (SplashPeak is
+  // {mz, intensity} only), so it is the one numeric peak field that would
+  // otherwise pass through unchecked.
+
+  it('throws when relativeIntensity is NaN', async () => {
+    await expect(
+      buildRecord({
+        ...minimal(),
+        PK$PEAK: [
+          { mz: 100.25, intensity: 100, relativeIntensity: Number.NaN },
+        ],
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+
+  it('throws when relativeIntensity is Infinity', async () => {
+    await expect(
+      buildRecord({
+        ...minimal(),
+        PK$PEAK: [
+          {
+            mz: 100.25,
+            intensity: 100,
+            relativeIntensity: Number.POSITIVE_INFINITY,
+          },
+        ],
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+
+  it('throws when relativeIntensity is negative', async () => {
+    await expect(
+      buildRecord({
+        ...minimal(),
+        PK$PEAK: [{ mz: 100.25, intensity: 100, relativeIntensity: -1 }],
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+
+  it('names the offending row in the error message', async () => {
+    await expect(
+      buildRecord({
+        ...minimal(),
+        PK$PEAK: [
+          { mz: 100.25, intensity: 100, relativeIntensity: 999 },
+          { mz: 205.5, intensity: 50, relativeIntensity: -1 },
+        ],
+      }),
+    ).rejects.toThrow(/205\.5/);
+  });
+
+  it('accepts zero', async () => {
+    const record = await buildRecord({
+      ...minimal(),
+      PK$PEAK: [{ mz: 100.25, intensity: 100, relativeIntensity: 0 }],
+    });
+
+    expect(record.PK$PEAK?.[0]?.relativeIntensity).toBe(0);
+  });
+});
+
+describe('buildRecord rejects an ACCESSION that could inject header fields', () => {
+  it('throws when ACCESSION contains a newline', async () => {
+    await expect(
+      buildRecord({
+        ACCESSION: 'MSBNK-x-1\nAUTHORS: Attacker A',
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+
+  it('throws when ACCESSION contains a carriage return', async () => {
+    await expect(
+      buildRecord({
+        ACCESSION: 'MSBNK-x-1\rAUTHORS: Attacker A',
+      }),
+    ).rejects.toThrow(RangeError);
   });
 });
 
@@ -408,12 +526,16 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
       PK$ANNOTATION: [{ mz: 100.25, annotation: '194.08' }],
     });
     const once = serializeRecord(record);
+    const reparsed = parseRecord(once);
 
     expect(record.PK$ANNOTATION?.[0]).toStrictEqual({
       mz: 100.25,
       annotation: '194.08',
     });
-    expect(serializeRecord(parseRecord(once))).toBe(once);
+    expect(stripOriginal(reparsed.PK$ANNOTATION)).toStrictEqual(
+      record.PK$ANNOTATION,
+    );
+    expect(serializeRecord(reparsed)).toBe(once);
   });
 
   it('accepts { mz, annotation, exactMass }', async () => {
@@ -464,6 +586,7 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
       ],
     });
     const once = serializeRecord(record);
+    const reparsed = parseRecord(once);
 
     expect(record.PK$ANNOTATION?.[0]).toStrictEqual({
       mz: 100.25,
@@ -471,7 +594,10 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
       exactMass: 194.0804,
       errorPpm: 1.2,
     });
-    expect(serializeRecord(parseRecord(once))).toBe(once);
+    expect(stripOriginal(reparsed.PK$ANNOTATION)).toStrictEqual(
+      record.PK$ANNOTATION,
+    );
+    expect(serializeRecord(reparsed)).toBe(once);
   });
 
   it('accepts a numeric-looking annotation when exactMass and errorPpm are both present, and round-trips it', async () => {
@@ -484,6 +610,7 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
       ],
     });
     const once = serializeRecord(record);
+    const reparsed = parseRecord(once);
 
     expect(record.PK$ANNOTATION?.[0]).toStrictEqual({
       mz: 100.25,
@@ -491,7 +618,66 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
       exactMass: 1.2,
       errorPpm: 3,
     });
-    expect(serializeRecord(parseRecord(once))).toBe(once);
+    expect(stripOriginal(reparsed.PK$ANNOTATION)).toStrictEqual(
+      record.PK$ANNOTATION,
+    );
+    expect(serializeRecord(reparsed)).toBe(once);
+  });
+});
+
+describe('buildRecord guards against parser-truncated PK$ANNOTATION columns', () => {
+  // Real MassBank annotation tables can carry more than 4 columns, e.g.
+  // "m/z tentative_formula formula_count exact_mass error(ppm)". The parser
+  // keeps only mz and the second token as `annotation`, stashing the rest of
+  // the source line in `_original` (table-parsers.ts) rather than in a typed
+  // field. RecordDraft's Omit only blocks object literals, so a parsed
+  // InternalRecord — whose PK$ANNOTATION rows carry `_original` at runtime —
+  // can still flow into buildRecord. Without a guard, buildRecord(parsed)
+  // would silently drop those extra columns and reprint the row under the
+  // canonical 4-column header as if it never had more.
+
+  it('throws when a parsed row carries more than 4 columns', async () => {
+    await expect(buildRecord(fiveColumnRecord())).rejects.toThrow(RangeError);
+  });
+
+  it('names the row and the real column count in the error message', async () => {
+    await expect(buildRecord(fiveColumnRecord())).rejects.toThrow(
+      /row 0 \(mz 59\.0134\).*5 columns/,
+    );
+  });
+
+  it('does not reject a parsed row a caller legitimately trimmed to 4 tokens', async () => {
+    const parsed = parseRecord(`ACCESSION: MSBNK-test-TST00001
+PK$ANNOTATION: m/z annotation exact_mass error(ppm)
+  59.0134 C2H3O2- 59.0133 2.9
+//
+`);
+
+    const record = await buildRecord(parsed);
+
+    expect(record.PK$ANNOTATION?.[0]).toStrictEqual({
+      mz: 59.0134,
+      annotation: 'C2H3O2-',
+      exactMass: 59.0133,
+      errorPpm: 2.9,
+    });
+  });
+
+  it('does not reject a hand-built draft row, which never carries _original', async () => {
+    // Annotation (the caller-facing type) has no _original field at all, so
+    // this guard must be a no-op for the common construction path.
+    const record = await buildRecord({
+      ...minimal(),
+      PK$ANNOTATION: [
+        { mz: 100.25, annotation: 'fragment', exactMass: 194.0804 },
+      ],
+    });
+
+    expect(record.PK$ANNOTATION?.[0]).toStrictEqual({
+      mz: 100.25,
+      annotation: 'fragment',
+      exactMass: 194.0804,
+    });
   });
 });
 
@@ -499,8 +685,10 @@ describe('the binding correctness property', () => {
   it('produces text that is a fixed point of serialize∘parse', async () => {
     const record = await buildRecord({ ...minimal(), PK$PEAK: unsorted() });
     const once = serializeRecord(record);
+    const reparsed = parseRecord(once);
 
-    expect(serializeRecord(parseRecord(once))).toBe(once);
+    expect(stripOriginal(reparsed.PK$PEAK)).toStrictEqual(record.PK$PEAK);
+    expect(serializeRecord(reparsed)).toBe(once);
   });
 
   it('is a fixed point with COMMENT present', async () => {
@@ -514,7 +702,43 @@ describe('the binding correctness property', () => {
       PK$PEAK: unsorted(),
     });
     const once = serializeRecord(record);
+    const reparsed = parseRecord(once);
 
-    expect(serializeRecord(parseRecord(once))).toBe(once);
+    expect(stripOriginal(reparsed.PK$PEAK)).toStrictEqual(record.PK$PEAK);
+    expect(serializeRecord(reparsed)).toBe(once);
+  });
+});
+
+describe('buildRecord against the sample fixtures', () => {
+  // The rest of this file constructs drafts by hand. These fixtures are real
+  // MassBank records exercised through the full parse -> buildRecord ->
+  // serialize -> reparse pipeline, so a defect that only shows up on
+  // real-world field combinations (rather than a hand-picked minimal draft)
+  // has a chance to surface here.
+  const fixtures = [
+    'MSBNK-test-TST00001.txt',
+    'MSBNK-test-TST00002.txt',
+    'MSBNK-test-TST00003.txt',
+  ];
+
+  it.each(fixtures)('round-trips %s and validates green', async (name) => {
+    const original = await readFile(
+      join(import.meta.dirname, '..', 'data', name),
+      'utf8',
+    );
+    const parsed = parseRecord(original);
+    const rebuilt = await buildRecord(parsed);
+    const reparsed = parseRecord(serializeRecord(rebuilt));
+
+    expect(stripOriginal(reparsed.PK$PEAK)).toStrictEqual(
+      stripOriginal(parsed.PK$PEAK),
+    );
+    expect(stripOriginal(reparsed.PK$ANNOTATION)).toStrictEqual(
+      stripOriginal(parsed.PK$ANNOTATION),
+    );
+
+    const result = await validateRecord(rebuilt);
+
+    expect(result.success).toBe(true);
   });
 });

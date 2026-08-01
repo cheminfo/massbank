@@ -1,4 +1,9 @@
-import type { Annotation, InternalRecord, Peak } from '../record.ts';
+import type {
+  Annotation,
+  AnnotationWithOriginal,
+  InternalRecord,
+  Peak,
+} from '../record.ts';
 import { calculateSplash } from '../splash/calculate-splash.ts';
 
 // A record under construction. _original and _PK$ANNOTATION_HEADER are typed
@@ -24,6 +29,42 @@ export type RecordDraft = Partial<
  */
 function looksNumeric(value: string): boolean {
   return !Number.isNaN(Number.parseFloat(value));
+}
+
+/**
+ * A row parsed from a real PK$ANNOTATION table can carry more columns than
+ * `Annotation` has fields — table-parsers.ts reads a row with more than 4
+ * whitespace-delimited tokens by keeping only `mz` and the second token as
+ * `annotation`, discarding every later column into `_original` (the raw
+ * source line) rather than into a typed field. `RecordDraft` types
+ * `PK$ANNOTATION` as `Annotation[]`, which has no `_original`, but a caller
+ * can still pass a parsed `InternalRecord` through — the `Omit` only blocks
+ * object literals, not variables — so `_original` can be present at
+ * runtime even though the type says otherwise. When it is, and it has more
+ * than 4 tokens, rebuilding from `{mz, annotation, exactMass, errorPpm}`
+ * would silently drop those extra columns and reprint the row under the
+ * canonical 4-column header as if it had never had more.
+ *
+ * At 4 or fewer tokens the parsed fields fully represent the source row, so
+ * a caller's own edits (which may legitimately reduce the field count, e.g.
+ * clearing `errorPpm`) must not be rejected here.
+ * @param row - the annotation row to check
+ * @param index - the row's position in the draft, for error reporting
+ * @throws {RangeError} when `_original` tokenises to more than 4 columns
+ */
+function assertNoDiscardedColumns(
+  row: AnnotationWithOriginal,
+  index: number,
+): void {
+  if (row._original === undefined) {
+    return;
+  }
+  const tokenCount = row._original.trim().split(/\s+/).length;
+  if (tokenCount > 4) {
+    throw new RangeError(
+      `PK$ANNOTATION row ${index} (mz ${row.mz}): the source row has ${tokenCount} columns, but the parsed fields (mz, annotation, exactMass, errorPpm) represent only the first four — columns beyond the fourth would be lost if this row is rebuilt.`,
+    );
+  }
 }
 
 /**
@@ -57,13 +98,15 @@ function assertRoundTrippableAnnotationText(
 }
 
 /**
- * A non-finite `mz`, `exactMass`, or `errorPpm` serializes to a literal like
- * `"NaN"` or `"Infinity"`. For `mz` specifically, the parser bails on that
- * token (`Number.parseFloat` returns `NaN` for it) and the whole row silently
- * vanishes on reparse. For `exactMass`/`errorPpm`, the literal either fails
- * the parser's own numeric test (and is then silently discarded rather than
- * reparsed) or is nonsensical as a physical quantity even where it happens to
- * reparse.
+ * `mz`, `exactMass`, and `errorPpm` are rejected when non-finite because none
+ * of them are physical quantities as `NaN` or `Infinity`, and MassBank's text
+ * format has no representation for either — not because the parser is
+ * guaranteed to lose them. The actual reparse behaviour varies: `NaN` for
+ * `mz` does make the parser bail on that token and drop the whole row, but
+ * `Infinity` for `mz` reparses fine (`Number.parseFloat('Infinity')` is
+ * `Infinity`, so the row survives). `exactMass`/`errorPpm` have no numeric
+ * test at all in the 4-token branch, so a non-finite value there would
+ * reparse as literally `NaN`/`Infinity` rather than being discarded.
  * @param row - the annotation row to check
  * @param index - the row's position in the draft, for error reporting
  * @throws {RangeError} when `mz`, `exactMass`, or `errorPpm` is not finite
@@ -116,6 +159,7 @@ function assertFiniteAnnotationValues(row: Annotation, index: number): void {
  * @throws {RangeError} when the row cannot be serialized and reparsed as itself
  */
 function assertExpressibleAnnotation(row: Annotation, index: number): void {
+  assertNoDiscardedColumns(row, index);
   assertRoundTrippableAnnotationText(row, index);
   assertFiniteAnnotationValues(row, index);
 
@@ -165,6 +209,30 @@ function assertExpressibleAnnotation(row: Annotation, index: number): void {
 }
 
 /**
+ * `relativeIntensity` is the one numeric peak field `calculateSplash` never
+ * sees — `SplashPeak` is `{mz, intensity}` only — so a bad value here passes
+ * silently through the SPLASH computation. Left unchecked, a non-finite
+ * value serializes as a literal `NaN`/`Infinity` in the output file, and a
+ * negative value is not a meaningful reading against a base peak.
+ *
+ * `relativeIntensity` is caller-owned: this only validates it, never derives
+ * or rescales it. Deriving it would require picking a scale convention
+ * MassBank does not fix (base peak 999 vs 100), and on a
+ * `buildRecord(parseRecord(file))` round trip it would silently rescale
+ * values that were already correct in the source.
+ * @param peak - the peak to check
+ * @param index - the peak's position in the draft, for error reporting
+ * @throws {RangeError} when `relativeIntensity` is not finite or is negative
+ */
+function assertValidRelativeIntensity(peak: Peak, index: number): void {
+  if (!Number.isFinite(peak.relativeIntensity) || peak.relativeIntensity < 0) {
+    throw new RangeError(
+      `PK$PEAK row ${index} (mz ${peak.mz}): relativeIntensity ${peak.relativeIntensity} is not finite or is negative.`,
+    );
+  }
+}
+
+/**
  * Normalise a draft into a canonical record.
  *
  * Validation cannot detect what this prevents: unsorted peaks, a wrong
@@ -180,19 +248,39 @@ function assertExpressibleAnnotation(row: Annotation, index: number): void {
  * @param draft - the record draft to canonicalise
  * @returns the canonicalised record
  * @throws {RangeError} when the peak list is non-empty but cannot be hashed —
- * all-zero or non-finite. An empty peak list is dropped rather than hashed, so
- * it never reaches this error. Note SplashRule swallows the same error; the
- * builder does not, because such a spectrum is not publishable.
+ * all-zero intensity, a negative intensity, or a non-finite `mz`/`intensity`.
+ * A negative `mz` also throws, but via a different guard inside SPLASH's
+ * histogram step, with a message that reads as "empty or all-zero-intensity"
+ * even though the spectrum may be neither — see calculate-splash.ts. An empty
+ * peak list is dropped rather than hashed, so it never reaches either error.
+ * Note SplashRule swallows the same error; the builder does not, because such
+ * a spectrum is not publishable.
+ * @throws {RangeError} when a peak's `relativeIntensity` is not finite or is
+ * negative. `relativeIntensity` is caller-owned — see
+ * {@link assertValidRelativeIntensity} — and is never derived or rescaled.
+ * @throws {RangeError} when `ACCESSION` contains a newline or carriage
+ * return, which would inject extra header lines into the serialized record.
  * @throws {RangeError} when an annotation row cannot survive a PK$ANNOTATION
- * round-trip: `annotation` is empty, whitespace-only, or contains internal
- * whitespace; `mz`, `exactMass`, or `errorPpm` is not finite; `exactMass` or
- * `errorPpm` is set alone with no `annotation`; `errorPpm` is set with
- * `annotation` but no `exactMass`; or `annotation` looks numeric while
- * `exactMass` is set and `errorPpm` is not. See
+ * round-trip: the row's source text has more than 4 columns and would lose
+ * data if rebuilt; `annotation` is empty, whitespace-only, or contains
+ * internal whitespace; `mz`, `exactMass`, or `errorPpm` is not finite;
+ * `exactMass` or `errorPpm` is set alone with no `annotation`; `errorPpm` is
+ * set with `annotation` but no `exactMass`; or `annotation` looks numeric
+ * while `exactMass` is set and `errorPpm` is not. See
  * {@link assertExpressibleAnnotation} for the full legal/illegal table and
  * why it is not simply "a prefix of `[annotation, exactMass, errorPpm]`".
  */
 export async function buildRecord(draft: RecordDraft): Promise<InternalRecord> {
+  // ACCESSION is the one field buildRecord declares mandatory, and the field
+  // validateRecord derives a filename from. serializeRecord writes it as the
+  // first line verbatim, so a newline or carriage return inside it injects
+  // whatever text follows as forged header lines (e.g. a fake AUTHORS).
+  if (/[\n\r]/.test(draft.ACCESSION)) {
+    throw new RangeError(
+      'ACCESSION must not contain a newline or carriage return.',
+    );
+  }
+
   const record: InternalRecord = { ...draft };
   // buildRecord always emits its own canonical header for PK$ANNOTATION, so a
   // stale header carried in from a parsed InternalRecord must not survive —
@@ -204,6 +292,9 @@ export async function buildRecord(draft: RecordDraft): Promise<InternalRecord> {
 
   const peaks = draft.PK$PEAK;
   if (peaks !== undefined && peaks.length > 0) {
+    for (const [index, peak] of peaks.entries()) {
+      assertValidRelativeIntensity(peak, index);
+    }
     // Rebuild each peak from its numeric fields, discarding any _original a
     // caller smuggled through a structural type.
     const sorted = peaks
@@ -244,7 +335,8 @@ export async function buildRecord(draft: RecordDraft): Promise<InternalRecord> {
       }))
       .toSorted((a, b) => a.mz - b.mz);
   } else {
-    // An empty table serializes as a header with no rows.
+    // Keep the canonical shape empty-table-free, matching the PK$NUM_PEAK
+    // and PK$SPLASH deletes above rather than carrying an empty array.
     delete record.PK$ANNOTATION;
   }
 
