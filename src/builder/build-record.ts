@@ -288,7 +288,7 @@ const VERBATIM_STRING_FIELDS = [
   'SP$SCIENTIFIC_NAME',
   'SP$LINEAGE',
   'SP$SAMPLE',
-] as const satisfies ReadonlyArray<keyof RecordDraft>;
+] as const satisfies ReadonlyArray<keyof InternalRecord>;
 
 const VERBATIM_ARRAY_FIELDS = [
   'COMMENT',
@@ -299,7 +299,54 @@ const VERBATIM_ARRAY_FIELDS = [
   'MS$FOCUSED_ION',
   'MS$DATA_PROCESSING',
   'SP$LINK',
-] as const satisfies ReadonlyArray<keyof RecordDraft>;
+] as const satisfies ReadonlyArray<keyof InternalRecord>;
+
+/**
+ * `InternalRecord` fields `buildRecord` deliberately does NOT write verbatim
+ * from the draft: `ACCESSION` (guarded separately above, with its own
+ * stricter rules — non-empty, no padding), the peak and annotation tables
+ * (rebuilt row-by-row from typed fields, never copied as strings), and the
+ * fields `buildRecord` always recomputes (`PK$SPLASH`, `PK$NUM_PEAK`) or
+ * strips (`_PK$ANNOTATION_HEADER`).
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- only used at the type level, by the exhaustiveness check below
+const NOT_WRITTEN_VERBATIM = [
+  'ACCESSION',
+  'PK$SPLASH',
+  'PK$NUM_PEAK',
+  'PK$PEAK',
+  'PK$ANNOTATION',
+  '_PK$ANNOTATION_HEADER',
+] as const satisfies ReadonlyArray<keyof InternalRecord>;
+
+/**
+ * Compile-time exhaustiveness check, anchored on `InternalRecord` rather
+ * than `RecordDraft`: the serializer can only ever write a field that
+ * exists on `InternalRecord`, so covering every key of that type covers
+ * every field the serializer can write. (`RecordDraft`'s `Omit` drops
+ * `_PK$ANNOTATION_HEADER` entirely, so a check anchored there would never
+ * even see that key.)
+ *
+ * `UnclassifiedInternalRecordField` is every `InternalRecord` key absent
+ * from all three lists above. `AssertNoUnclassifiedFields` only type-checks
+ * when its argument extends `never`, so this line fails to compile the
+ * moment `InternalRecord` grows a field that isn't in one of the three
+ * lists. When it does: read how record-serializer.ts writes the new field,
+ * then classify it into `VERBATIM_STRING_FIELDS`, `VERBATIM_ARRAY_FIELDS`,
+ * or `NOT_WRITTEN_VERBATIM`. Putting it in `NOT_WRITTEN_VERBATIM` is a
+ * decision, not a default — confirm the serializer really doesn't write it
+ * verbatim before choosing that list.
+ */
+type UnclassifiedInternalRecordField = Exclude<
+  keyof InternalRecord,
+  | (typeof VERBATIM_STRING_FIELDS)[number]
+  | (typeof VERBATIM_ARRAY_FIELDS)[number]
+  | (typeof NOT_WRITTEN_VERBATIM)[number]
+>;
+type AssertNoUnclassifiedFields<T extends never> = T;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- never referenced; its only job is to fail tsc if it doesn't compile
+type VerbatimFieldListsAreExhaustive =
+  AssertNoUnclassifiedFields<UnclassifiedInternalRecordField>;
 
 /**
  * Reject a draft-supplied value the serializer would write verbatim if it
