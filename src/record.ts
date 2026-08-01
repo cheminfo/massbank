@@ -1,5 +1,5 @@
 /**
- * MassBank MassBankRecord structure
+ * MassBank record structures
  */
 
 export interface Peak {
