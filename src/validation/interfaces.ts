@@ -1,4 +1,4 @@
-import type { InternalRecord } from '../record.js';
+import type { MassBankRecord } from '../record.js';
 import type { ValidationError, ValidationWarning } from '../types.js';
 
 /**
@@ -16,7 +16,7 @@ export interface IValidationRule {
    * @returns Array of errors (empty if valid), or a Promise of one
    */
   validate(
-    record: InternalRecord,
+    record: MassBankRecord,
     originalText: string,
     filename: string,
     options: ValidationRuleOptions,
@@ -26,7 +26,7 @@ export interface IValidationRule {
    * Get warnings for a record (non-blocking issues)
    */
   getWarnings(
-    record: InternalRecord,
+    record: MassBankRecord,
     originalText: string,
     filename: string,
     options: ValidationRuleOptions,

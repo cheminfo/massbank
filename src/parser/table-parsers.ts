@@ -1,7 +1,7 @@
 import type {
   Annotation,
   AnnotationWithOriginal,
-  InternalRecord,
+  MassBankRecord,
   PeakWithOriginal,
 } from '../record.js';
 
@@ -22,7 +22,7 @@ abstract class BaseTableParser implements ITableParser {
     key: string,
     lines: string[],
     startIndex: number,
-    record: InternalRecord,
+    record: MassBankRecord,
     headerLine?: string,
   ): number;
 }
@@ -39,7 +39,7 @@ export class PeakTableParser extends BaseTableParser {
     key: string,
     lines: string[],
     startIndex: number,
-    record: InternalRecord,
+    record: MassBankRecord,
     _headerLine?: string,
   ): number {
     void _headerLine;
@@ -115,7 +115,7 @@ export class AnnotationTableParser extends BaseTableParser {
     key: string,
     lines: string[],
     startIndex: number,
-    record: InternalRecord,
+    record: MassBankRecord,
     headerLine?: string,
   ): number {
     const annotations: Annotation[] = [];

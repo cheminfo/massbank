@@ -112,7 +112,7 @@ Records whose annotation values contain a colon — lipid nomenclature such as `
 
 `buildRecord` and `validateRecord` let you construct and check records programmatically instead of hand-rolling MassBank format text.
 
-`buildRecord(draft: RecordDraft)` normalizes a draft into a canonical `InternalRecord`. Only `ACCESSION` is required. It:
+`buildRecord(draft: RecordDraft)` normalizes a draft into a canonical `MassBankRecord`. Only `ACCESSION` is required. It:
 
 - Sorts both `PK$PEAK` and `PK$ANNOTATION` ascending by `mz`. Peaks keep their own `intensity` and `relativeIntensity` attached; annotation rows keep their own `annotation`/`exactMass`/`errorPpm` attached. A caller supplying either table in a deliberate order gets it silently reordered.
 - Derives `PK$NUM_PEAK` from the sorted peak count — a draft-supplied value is discarded.
@@ -173,11 +173,11 @@ try {
 }
 ```
 
-`validateRecord(record: InternalRecord, options?: ValidationOptions)` validates a structured record by serializing it and delegating to `validateContent`, so the same bytes get the same verdict through either entry point.
+`validateRecord(record: MassBankRecord, options?: ValidationOptions)` validates a structured record by serializing it and delegating to `validateContent`, so the same bytes get the same verdict through either entry point.
 
 Two limits are worth knowing:
 
-1. **The filename is derived from `ACCESSION`** (as `` `${record.ACCESSION}.txt` ``), because an `InternalRecord` carries no filename of its own. `AccessionMatchRule` therefore **cannot fail** on this path for any well-formed accession — a green result is not evidence the accession matches any external filename. Use `validate()` or `validateContent()` with the real filename to check that.
+1. **The filename is derived from `ACCESSION`** (as `` `${record.ACCESSION}.txt` ``), because a `MassBankRecord` carries no filename of its own. `AccessionMatchRule` therefore **cannot fail** on this path for any well-formed accession — a green result is not evidence the accession matches any external filename. Use `validate()` or `validateContent()` with the real filename to check that.
 2. **Mandatory fields and controlled vocabularies are not checked**, same as `validate`/`validateContent` today (see [MassBank Format 2.6.0 Compliance](#massbank-format-260-compliance)). A record containing only `ACCESSION` returns `success: true`. A green result means "round-trips and passes the current rule set," not "submittable to MassBank."
 
 > `validateRecord` is intended to become the strict/submission entry point: new semantic checks (mandatory fields, controlled vocabularies) will land on it first in future releases, ahead of `validate`/`validateContent`. It does not yet enforce anything beyond limit 2 above, and past behavior is not a guarantee of future behavior — a record that validates green today may not once those checks land.
@@ -188,7 +188,7 @@ This package also exports, from the package root:
 
 - `parseRecord` and `serializeRecord` — the parser and serializer `buildRecord`/`validateRecord` are built on
 - `ParseException` — the error `parseRecord` throws on malformed input
-- Types: `Annotation`, `InternalRecord`, `ParseError`, `Peak`, and `RecordDraft`
+- Types: `Annotation`, `MassBankRecord`, `ParseError`, `Peak`, and `RecordDraft`
 
 Three things to keep straight when working with these directly:
 
@@ -239,9 +239,9 @@ Normalize a record draft into a canonical record. See [Builder API](#builder-api
 
 **Parameters:**
 
-- `draft: RecordDraft` - A partial `InternalRecord` requiring only `ACCESSION`; `PK$PEAK`/`PK$ANNOTATION` accept the caller-facing `Peak`/`Annotation` shapes (no `_original`)
+- `draft: RecordDraft` - A partial `MassBankRecord` requiring only `ACCESSION`; `PK$PEAK`/`PK$ANNOTATION` accept the caller-facing `Peak`/`Annotation` shapes (no `_original`)
 
-**Returns:** `Promise<InternalRecord>`
+**Returns:** `Promise<MassBankRecord>`
 
 **Throws:** `RangeError` if a non-empty `PK$PEAK` cannot be hashed (all-zero intensity, a negative intensity, a negative `mz`, or a non-finite `mz`/`intensity`); if a peak's `relativeIntensity` is not finite or is negative; if `ACCESSION` contains a newline or carriage return, is empty or whitespace-only, or has leading or trailing whitespace; if any other field the serializer writes verbatim (or an element of an array-valued one) contains a newline; or if a `PK$ANNOTATION` row cannot survive a round-trip (including an _edited_ parsed row whose source columns the parser did not fully map into typed fields — an unedited one builds successfully instead, preserving its real source text) — see [Builder API](#builder-api) above for the full legal/illegal combinations
 
@@ -251,7 +251,7 @@ Validate a structured record. See [Builder API](#builder-api) above for the two 
 
 **Parameters:**
 
-- `record: InternalRecord` - The structured record to validate
+- `record: MassBankRecord` - The structured record to validate
 - `options?: ValidationOptions` - Optional validation options, forwarded to `validateContent`
 
 **Returns:** `Promise<ValidationResult>` (same shape as `validate`/`validateContent`)

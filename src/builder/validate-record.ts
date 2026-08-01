@@ -1,4 +1,4 @@
-import type { InternalRecord } from '../record.ts';
+import type { MassBankRecord } from '../record.ts';
 import { serializeRecord } from '../serializer/record-serializer.ts';
 import type { ValidationOptions, ValidationResult } from '../types.ts';
 import { validateContent } from '../validator/validateContent.ts';
@@ -13,7 +13,7 @@ import { validateContent } from '../validator/validateContent.ts';
  *
  * Two limits:
  *
- * The filename is derived from ACCESSION, because an InternalRecord has none.
+ * The filename is derived from ACCESSION, because a MassBankRecord has none.
  * AccessionMatchRule therefore cannot fail here for any well-formed ACCESSION —
  * a green result is NOT evidence that the accession matches any external
  * filename. (An ACCESSION containing a path separator, e.g. 'foo/bar' or
@@ -30,7 +30,7 @@ import { validateContent } from '../validator/validateContent.ts';
  * @returns the validation result
  */
 export async function validateRecord(
-  record: InternalRecord,
+  record: MassBankRecord,
   options: ValidationOptions = {},
 ): Promise<ValidationResult> {
   return validateContent(

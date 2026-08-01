@@ -1,4 +1,4 @@
-import type { InternalRecord } from '../../record.js';
+import type { MassBankRecord } from '../../record.js';
 import type { ValidationError, ValidationWarning } from '../../types.js';
 import type { IValidationRule, ValidationRuleOptions } from '../interfaces.js';
 
@@ -30,7 +30,7 @@ function removeExtension(filename: string): string {
  */
 export class AccessionMatchRule implements IValidationRule {
   validate(
-    record: InternalRecord,
+    record: MassBankRecord,
     _originalText: string,
     filename: string,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars

@@ -2,7 +2,7 @@ import { parseRecord } from '../parser/parse-record.ts';
 import type {
   Annotation,
   AnnotationWithOriginal,
-  InternalRecord,
+  MassBankRecord,
   Peak,
 } from '../record.ts';
 import { calculateSplash } from '../splash/calculate-splash.ts';
@@ -15,7 +15,7 @@ import { BuildException } from './exceptions.ts';
 // `Omit`) because a draft can't declare a row's `_original` through this
 // type — TypeScript's excess-property check only fires on object literals,
 // not on a variable of a wider type, so a caller can still pass a parsed
-// InternalRecord straight through and its rows/header arrive with
+// MassBankRecord straight through and its rows/header arrive with
 // `_original` intact at runtime regardless.
 //
 // Peaks and annotations then diverge in what buildRecord does with that
@@ -28,7 +28,7 @@ import { BuildException } from './exceptions.ts';
 // parsed — see wasAnnotationRowEdited — and discards them, table-wide, the
 // moment any row has.
 export type RecordDraft = Partial<
-  Omit<InternalRecord, 'PK$PEAK' | 'PK$ANNOTATION' | '_PK$ANNOTATION_HEADER'>
+  Omit<MassBankRecord, 'PK$PEAK' | 'PK$ANNOTATION' | '_PK$ANNOTATION_HEADER'>
 > & {
   ACCESSION: string;
   PK$PEAK?: Peak[];
@@ -128,7 +128,7 @@ function wasAnnotationRowEdited(row: AnnotationWithOriginal): boolean {
  *   `[mz, annotation]` and drops every token from the third onward.
  *
  * `RecordDraft` types `PK$ANNOTATION` as `Annotation[]`, which has no
- * `_original`, but a caller can still pass a parsed `InternalRecord` through
+ * `_original`, but a caller can still pass a parsed `MassBankRecord` through
  * — the `Omit` only blocks object literals, not variables — so `_original`
  * can be present at runtime even though the type says otherwise. When a
  * token was dropped this way, rebuilding from the mapped fields alone would
@@ -549,7 +549,7 @@ const VERBATIM_STRING_FIELDS = [
   'SP$SCIENTIFIC_NAME',
   'SP$LINEAGE',
   'SP$SAMPLE',
-] as const satisfies ReadonlyArray<keyof InternalRecord>;
+] as const satisfies ReadonlyArray<keyof MassBankRecord>;
 
 const VERBATIM_ARRAY_FIELDS = [
   'COMMENT',
@@ -560,7 +560,7 @@ const VERBATIM_ARRAY_FIELDS = [
   'MS$FOCUSED_ION',
   'MS$DATA_PROCESSING',
   'SP$LINK',
-] as const satisfies ReadonlyArray<keyof InternalRecord>;
+] as const satisfies ReadonlyArray<keyof MassBankRecord>;
 
 // Exported for tests only, so build-record.test.ts can drive its field
 // sweeps from the same lists buildRecord actually iterates instead of a
@@ -569,7 +569,7 @@ const VERBATIM_ARRAY_FIELDS = [
 export { VERBATIM_ARRAY_FIELDS, VERBATIM_STRING_FIELDS };
 
 /**
- * `InternalRecord` fields `buildRecord` deliberately does NOT write verbatim
+ * `MassBankRecord` fields `buildRecord` deliberately does NOT write verbatim
  * from the draft: `ACCESSION` (guarded separately above, with its own
  * stricter rules — non-empty, no padding), the peak and annotation tables
  * (rebuilt row-by-row from typed fields, never copied as strings), and the
@@ -584,28 +584,28 @@ const NOT_WRITTEN_VERBATIM = [
   'PK$PEAK',
   'PK$ANNOTATION',
   '_PK$ANNOTATION_HEADER',
-] as const satisfies ReadonlyArray<keyof InternalRecord>;
+] as const satisfies ReadonlyArray<keyof MassBankRecord>;
 
 /**
- * Compile-time exhaustiveness check, anchored on `InternalRecord` rather
+ * Compile-time exhaustiveness check, anchored on `MassBankRecord` rather
  * than `RecordDraft`: the serializer can only ever write a field that
- * exists on `InternalRecord`, so covering every key of that type covers
+ * exists on `MassBankRecord`, so covering every key of that type covers
  * every field the serializer can write. (`RecordDraft`'s `Omit` drops
  * `_PK$ANNOTATION_HEADER` entirely, so a check anchored there would never
  * even see that key.)
  *
- * `UnclassifiedInternalRecordField` is every `InternalRecord` key absent
+ * `UnclassifiedMassBankRecordField` is every `MassBankRecord` key absent
  * from all three lists above. `AssertNoUnclassifiedFields` only type-checks
  * when its argument extends `never`, so this line fails to compile the
- * moment `InternalRecord` grows a field that isn't in one of the three
+ * moment `MassBankRecord` grows a field that isn't in one of the three
  * lists. When it does: read how record-serializer.ts writes the new field,
  * then classify it into `VERBATIM_STRING_FIELDS`, `VERBATIM_ARRAY_FIELDS`,
  * or `NOT_WRITTEN_VERBATIM`. Putting it in `NOT_WRITTEN_VERBATIM` is a
  * decision, not a default — confirm the serializer really doesn't write it
  * verbatim before choosing that list.
  */
-type UnclassifiedInternalRecordField = Exclude<
-  keyof InternalRecord,
+type UnclassifiedMassBankRecordField = Exclude<
+  keyof MassBankRecord,
   | (typeof VERBATIM_STRING_FIELDS)[number]
   | (typeof VERBATIM_ARRAY_FIELDS)[number]
   | (typeof NOT_WRITTEN_VERBATIM)[number]
@@ -613,7 +613,7 @@ type UnclassifiedInternalRecordField = Exclude<
 type AssertNoUnclassifiedFields<T extends never> = T;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- never referenced; its only job is to fail tsc if it doesn't compile
 type VerbatimFieldListsAreExhaustive =
-  AssertNoUnclassifiedFields<UnclassifiedInternalRecordField>;
+  AssertNoUnclassifiedFields<UnclassifiedMassBankRecordField>;
 
 /**
  * ACCESSION is the one field `buildRecord` declares mandatory, and the field
@@ -757,7 +757,7 @@ function checkVerbatimText(
  * SplashRule swallows the same error; the builder does not, because such a
  * spectrum is not publishable.
  */
-export async function buildRecord(draft: RecordDraft): Promise<InternalRecord> {
+export async function buildRecord(draft: RecordDraft): Promise<MassBankRecord> {
   const errors: BuildError[] = [];
 
   const accessionError = checkAccession(draft.ACCESSION);
@@ -816,7 +816,7 @@ export async function buildRecord(draft: RecordDraft): Promise<InternalRecord> {
     throw new BuildException(errors);
   }
 
-  const record: InternalRecord = { ...draft };
+  const record: MassBankRecord = { ...draft };
 
   if (peaks !== undefined && peaks.length > 0) {
     // Rebuild each peak from its numeric fields, discarding any _original a
@@ -858,14 +858,14 @@ export async function buildRecord(draft: RecordDraft): Promise<InternalRecord> {
       }))
       .toSorted((a, b) => a.mz - b.mz);
     if (preserveOriginals) {
-      // Keep whatever header the draft carried in (a parsed InternalRecord
+      // Keep whatever header the draft carried in (a parsed MassBankRecord
       // passed straight through — RecordDraft's Omit only blocks object
       // literals, not variables) so the preserved rows print under the
       // header they actually belong to, not buildRecord's default.
     } else {
       // buildRecord is about to emit fresh rows rebuilt from typed fields
       // under its own canonical header, so a header carried in from a
-      // parsed InternalRecord must not survive — otherwise the serializer
+      // parsed MassBankRecord must not survive — otherwise the serializer
       // would print the rebuilt rows under a header describing the old ones.
       delete record._PK$ANNOTATION_HEADER;
     }

@@ -1,5 +1,5 @@
 import { PositionUtils } from '../../parser/index.js';
-import type { InternalRecord } from '../../record.js';
+import type { MassBankRecord } from '../../record.js';
 import type { ValidationError, ValidationWarning } from '../../types.js';
 import type { IValidationRule, ValidationRuleOptions } from '../interfaces.js';
 
@@ -21,7 +21,7 @@ const NON_STANDARD_CHARS_PATTERN =
  */
 export class NonStandardCharsRule implements IValidationRule {
   validate(
-    _record: InternalRecord,
+    _record: MassBankRecord,
     _originalText: string,
     _filename: string,
     _options: ValidationRuleOptions,
@@ -34,7 +34,7 @@ export class NonStandardCharsRule implements IValidationRule {
   }
 
   getWarnings(
-    record: InternalRecord,
+    record: MassBankRecord,
     originalText: string,
     filename: string,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars

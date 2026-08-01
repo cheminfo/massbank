@@ -1,4 +1,4 @@
-import type { InternalRecord } from '../../record.js';
+import type { MassBankRecord } from '../../record.js';
 import { calculateSplash } from '../../splash/calculate-splash.js';
 import type { ValidationError, ValidationWarning } from '../../types.js';
 import type { IValidationRule, ValidationRuleOptions } from '../interfaces.js';
@@ -11,7 +11,7 @@ import type { IValidationRule, ValidationRuleOptions } from '../interfaces.js';
  */
 export class SplashRule implements IValidationRule {
   async validate(
-    record: InternalRecord,
+    record: MassBankRecord,
     _originalText: string,
     filename: string,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars

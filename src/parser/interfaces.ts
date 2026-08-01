@@ -1,16 +1,16 @@
-import type { InternalRecord } from '../record.js';
+import type { MassBankRecord } from '../record.js';
 
 /**
  * Interface for parsing MassBank records
  */
 export interface IRecordParser {
   /**
-   * Parse a MassBank record string into a InternalRecord object
+   * Parse a MassBank record string into a MassBankRecord object
    * @param text - The MassBank record text
-   * @returns The parsed InternalRecord object
+   * @returns The parsed MassBankRecord object
    * @throws {import('./exceptions.js').ParseException} if parsing fails
    */
-  parse(text: string): InternalRecord;
+  parse(text: string): MassBankRecord;
 }
 
 /**
@@ -25,7 +25,7 @@ export interface IFieldParser {
   /**
    * Parse the field value
    */
-  parse(key: string, value: string, record: InternalRecord): void;
+  parse(key: string, value: string, record: MassBankRecord): void;
 }
 
 /**
@@ -42,7 +42,7 @@ export interface ITableParser {
    * @param key - The field key
    * @param lines - All lines
    * @param startIndex - Index of first data line (header is at startIndex - 1)
-   * @param record - InternalRecord to populate
+   * @param record - MassBankRecord to populate
    * @param headerLine - The full header line (e.g., "PK$ANNOTATION: m/z ion")
    * @returns The number of lines consumed
    */
@@ -50,7 +50,7 @@ export interface ITableParser {
     key: string,
     lines: string[],
     startIndex: number,
-    record: InternalRecord,
+    record: MassBankRecord,
     headerLine?: string,
   ): number;
 }

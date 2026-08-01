@@ -1,4 +1,4 @@
-import type { InternalRecord } from '../record.ts';
+import type { MassBankRecord } from '../record.ts';
 
 import { ParseException } from './exceptions.ts';
 import {
@@ -42,12 +42,12 @@ export class RecordParser implements IRecordParser {
   }
 
   /**
-   * Parse a MassBank record string into a InternalRecord object
+   * Parse a MassBank record string into a MassBankRecord object
    * @param text
    */
-  parse(text: string): InternalRecord {
+  parse(text: string): MassBankRecord {
     const lines = text.split(/\r?\n/);
-    const record: InternalRecord = {
+    const record: MassBankRecord = {
       ACCESSION: '',
     };
 
@@ -148,9 +148,9 @@ export function createParser(): IRecordParser {
 /**
  * Convenience function to parse a record
  * @param text - MassBank record as string
- * @returns Parsed InternalRecord object
+ * @returns Parsed MassBankRecord object
  */
-export function parseRecord(text: string): InternalRecord {
+export function parseRecord(text: string): MassBankRecord {
   const parser = createParser();
   return parser.parse(text);
 }

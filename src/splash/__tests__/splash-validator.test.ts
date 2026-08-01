@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { InternalRecord } from '../../record.js';
+import type { MassBankRecord } from '../../record.js';
 import { calculateSplash } from '../calculate-splash.js';
 import { createSplashValidator } from '../splash-validator.js';
 
@@ -19,7 +19,7 @@ const PEAKS =
 
 const CORRECT_SPLASH = 'splash10-014i-4900000000-889a38f7ace2626a0435';
 
-function makeRecord(overrides: Partial<InternalRecord>): InternalRecord {
+function makeRecord(overrides: Partial<MassBankRecord>): MassBankRecord {
   return { ACCESSION: 'MSBNK-test-TST00001', ...overrides };
 }
 

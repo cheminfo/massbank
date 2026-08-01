@@ -9,7 +9,7 @@ import type {
   Annotation,
   BuildError,
   BuildErrorCode,
-  InternalRecord,
+  MassBankRecord,
   ParseError,
   Peak,
   RecordDraft,
@@ -21,7 +21,7 @@ import type {
  * called; its only job is to fail `tsc --noEmit` if a type stops being
  * exported from the package root.
  * @param annotation - forces `Annotation` to resolve
- * @param record - forces `InternalRecord` to resolve
+ * @param record - forces `MassBankRecord` to resolve
  * @param peak - forces `Peak` to resolve
  * @param draft - forces `RecordDraft` to resolve
  * @param parseError - forces `ParseError` to resolve
@@ -31,7 +31,7 @@ import type {
  */
 export function assertExported(
   annotation: Annotation,
-  record: InternalRecord,
+  record: MassBankRecord,
   peak: Peak,
   draft: RecordDraft,
   parseError: ParseError,
@@ -39,7 +39,7 @@ export function assertExported(
   buildErrorCode: BuildErrorCode,
 ): [
   Annotation,
-  InternalRecord,
+  MassBankRecord,
   Peak,
   RecordDraft,
   ParseError,

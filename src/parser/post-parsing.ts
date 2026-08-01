@@ -2,13 +2,13 @@ import camelcase from 'camelcase';
 
 import type {
   AnnotationWithOriginal,
-  InternalRecord,
+  GroupedRecord,
   MassBankRecord,
   PeakWithOriginal,
 } from '../record.ts';
 
 /**
- * InternalRecord is a nearly flat struture, we will organize it
+ * MassBankRecord is a nearly flat struture, we will organize it
  * @param parsed
  */
 const groupKeyMap = {
@@ -20,11 +20,11 @@ const groupKeyMap = {
 } as const;
 
 /**
- * InternalRecord is a nearly flat structure; convert it to a camel-cased Record.
+ * MassBankRecord is a nearly flat structure; convert it to a camel-cased Record.
  * @param parsed
  */
-export function postParsing(parsed: InternalRecord): MassBankRecord {
-  const result: MassBankRecord = { accession: parsed.ACCESSION };
+export function postParsing(parsed: MassBankRecord): GroupedRecord {
+  const result: GroupedRecord = { accession: parsed.ACCESSION };
 
   for (const [rawKey, value] of Object.entries(parsed)) {
     if (rawKey === 'ACCESSION' || rawKey.startsWith('_')) continue;

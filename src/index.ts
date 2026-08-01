@@ -15,7 +15,7 @@ export { parseRecord } from './parser/parse-record.ts';
 export { serializeRecord } from './serializer/record-serializer.ts';
 export * from './builder/index.ts';
 
-export type { Annotation, InternalRecord, Peak } from './record.ts';
+export type { Annotation, MassBankRecord, Peak } from './record.ts';
 
 // Types for reading validation results
 export type {

@@ -14,7 +14,7 @@ import { parseRecord } from '../../parser/parse-record.ts';
 import type {
   Annotation,
   AnnotationWithOriginal,
-  InternalRecord,
+  MassBankRecord,
 } from '../../record.ts';
 import { serializeRecord } from '../../serializer/record-serializer.ts';
 
@@ -78,7 +78,7 @@ function stripOriginal<T extends { _original?: unknown }>(
  * @param record - the record to normalise
  * @returns the record with the recomputed fields omitted and `_original` stripped
  */
-function normalizeForComparison(record: InternalRecord) {
+function normalizeForComparison(record: MassBankRecord) {
   const {
     PK$SPLASH,
     PK$NUM_PEAK,
@@ -344,7 +344,7 @@ describe('buildRecord normalises what validation cannot detect', () => {
 
   it('keeps _PK$ANNOTATION_HEADER when the annotation table round-trips unedited', async () => {
     // RecordDraft's Omit only blocks object literals — a caller can still
-    // pass a parsed InternalRecord through. When none of its rows have been
+    // pass a parsed MassBankRecord through. When none of its rows have been
     // edited since parsing, they print as their own source text, so the
     // header they were written under is still the right one to keep.
     const parsed = parseRecord(
@@ -1021,7 +1021,7 @@ describe('buildRecord guards against parser-truncated PK$ANNOTATION columns', ()
   // keeps only mz and the second token as `annotation`, stashing the rest of
   // the source line in `_original` (table-parsers.ts) rather than in a typed
   // field. RecordDraft's Omit only blocks object literals, so a parsed
-  // InternalRecord — whose PK$ANNOTATION rows carry `_original` at runtime —
+  // MassBankRecord — whose PK$ANNOTATION rows carry `_original` at runtime —
   // can still flow into buildRecord.
   //
   // An UNEDITED row like this prints as its own `_original` text verbatim
