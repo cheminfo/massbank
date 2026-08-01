@@ -6,7 +6,11 @@ import { describe, expect, it } from 'vitest';
 import { buildRecord } from '../../builder/build-record.ts';
 import { validateRecord } from '../../builder/validate-record.ts';
 import { parseRecord } from '../../parser/parse-record.ts';
-import type { InternalRecord } from '../../record.ts';
+import type {
+  Annotation,
+  AnnotationWithOriginal,
+  InternalRecord,
+} from '../../record.ts';
 import { serializeRecord } from '../../serializer/record-serializer.ts';
 
 const minimal = () => ({
@@ -84,6 +88,94 @@ function normalizeForComparison(record: InternalRecord) {
     PK$PEAK: stripOriginal(PK$PEAK),
     PK$ANNOTATION: stripOriginal(PK$ANNOTATION),
   };
+}
+
+/**
+ * Rebuild an annotation row's own source text from its typed fields alone,
+ * mirroring the shape buildRecord prints for a row whose `_original` is
+ * discarded — reimplemented independently here (not imported from
+ * build-record.ts) so a comparison against it is a real proof, not a
+ * reflection of the code under test.
+ * @param row - the annotation row to rebuild
+ * @returns the whitespace-joined rebuilt row text
+ */
+function naiveRebuildAnnotationText(row: Annotation): string {
+  const parts = [String(row.mz)];
+  if (row.annotation !== undefined) {
+    parts.push(row.annotation);
+  }
+  if (row.exactMass !== undefined) {
+    parts.push(String(row.exactMass));
+  }
+  if (row.errorPpm !== undefined) {
+    parts.push(String(row.errorPpm));
+  }
+  return parts.join(' ');
+}
+
+/**
+ * Parse a single PK$ANNOTATION row's source text through the real parser.
+ * @param text - the row's source text
+ * @returns what the parser produces from `text` today, or `undefined` if it
+ * drops the line entirely
+ */
+function parseAnnotationText(text: string): AnnotationWithOriginal | undefined {
+  return parseRecord(`ACCESSION: sweep\nPK$ANNOTATION: m/z\n  ${text}\n//\n`)
+    .PK$ANNOTATION?.[0];
+}
+
+/**
+ * Compare only the fields the parser can produce.
+ * @param a - a row's fields
+ * @param b - another row's fields, or `undefined` if there is none
+ * @returns true when every field matches exactly
+ */
+function annotationFieldsMatch(
+  a: Annotation,
+  b: Annotation | undefined,
+): boolean {
+  return (
+    b !== undefined &&
+    a.mz === b.mz &&
+    a.annotation === b.annotation &&
+    a.exactMass === b.exactMass &&
+    a.errorPpm === b.errorPpm
+  );
+}
+
+/**
+ * Whether rebuilding `row` from its typed fields alone and reparsing the
+ * result through the real parser reproduces `row` itself — the independent
+ * oracle the property sweeps below classify against, so a disagreement means
+ * buildRecord and the live parser have drifted apart, not that this file's
+ * own expectations were wrong.
+ * @param row - the row to classify
+ * @returns true when rebuilding `row` would round-trip losslessly
+ */
+function wouldRoundTripIfRebuilt(row: Annotation): boolean {
+  return annotationFieldsMatch(
+    row,
+    parseAnnotationText(naiveRebuildAnnotationText(row)),
+  );
+}
+
+/**
+ * Whether every numeric field the parser mapped from a row is finite —
+ * independent of buildRecord's own `assertFiniteAnnotationValues`, so
+ * classifying against it is a real check, not a reflection of the code
+ * under test. For a row sourced from real parsing, this is the only way it
+ * can be unrepresentable: `annotation` is always a single safe token when it
+ * comes from real parsing, so it is never empty, whitespace-only, or
+ * internally spaced.
+ * @param row - the row to classify
+ * @returns true when `mz`, `exactMass`, and `errorPpm` are all finite
+ */
+function isRepresentable(row: Annotation): boolean {
+  return (
+    Number.isFinite(row.mz) &&
+    (row.exactMass === undefined || Number.isFinite(row.exactMass)) &&
+    (row.errorPpm === undefined || Number.isFinite(row.errorPpm))
+  );
 }
 
 describe('buildRecord normalises what validation cannot detect', () => {
@@ -245,10 +337,11 @@ describe('buildRecord normalises what validation cannot detect', () => {
     ).rejects.toThrow(RangeError);
   });
 
-  it('drops a stale _PK$ANNOTATION_HEADER carried in from a parsed record', async () => {
+  it('keeps _PK$ANNOTATION_HEADER when the annotation table round-trips unedited', async () => {
     // RecordDraft's Omit only blocks object literals — a caller can still
-    // pass a parsed InternalRecord through, whose header would then outlive
-    // a rebuild with a different column count.
+    // pass a parsed InternalRecord through. When none of its rows have been
+    // edited since parsing, they print as their own source text, so the
+    // header they were written under is still the right one to keep.
     const parsed = parseRecord(
       serializeRecord(
         await buildRecord({
@@ -261,6 +354,30 @@ describe('buildRecord normalises what validation cannot detect', () => {
     expect(parsed._PK$ANNOTATION_HEADER).toBeDefined();
 
     const rebuilt = await buildRecord(parsed);
+
+    expect(rebuilt._PK$ANNOTATION_HEADER).toBe(parsed._PK$ANNOTATION_HEADER);
+  });
+
+  it('drops a stale _PK$ANNOTATION_HEADER once a row has been edited', async () => {
+    // Editing a row forces every row in the table to be rebuilt from typed
+    // fields (all-or-nothing, see buildRecord), so the old header — written
+    // for the old rows — must not outlive the rebuild.
+    const parsed = parseRecord(
+      serializeRecord(
+        await buildRecord({
+          ...minimal(),
+          PK$ANNOTATION: [{ mz: 100.25, annotation: 'fragment' }],
+        }),
+      ),
+    );
+
+    expect(parsed._PK$ANNOTATION_HEADER).toBeDefined();
+
+    const edited = (parsed.PK$ANNOTATION ?? []).map((a) => ({
+      ...a,
+      mz: a.mz + 0.001,
+    }));
+    const rebuilt = await buildRecord({ ...parsed, PK$ANNOTATION: edited });
 
     expect(rebuilt._PK$ANNOTATION_HEADER).toBeUndefined();
   });
@@ -325,6 +442,77 @@ describe('buildRecord rejects an unsafe relativeIntensity', () => {
     });
 
     expect(record.PK$PEAK?.[0]?.relativeIntensity).toBe(0);
+  });
+});
+
+describe('buildRecord rejects a peak mz that would forge a SPLASH', () => {
+  // calculate-splash.ts rejects a non-finite mz but not a negative one:
+  // calculateHistogram bins by `Math.trunc(mz / binSize) % HISTOGRAM_BINS`,
+  // and Math.trunc(-50 / 5) === -0, aliasing a real peak at mz = -50 onto the
+  // same bin as one at mz = 0..4. A negative mz cannot be left to that guard
+  // to catch, since it does not.
+
+  it('throws when the only peak has a negative mz', async () => {
+    await expect(
+      buildRecord({
+        ...minimal(),
+        PK$PEAK: [{ mz: -50, intensity: 1000, relativeIntensity: 999 }],
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+
+  it('throws when a negative mz peak is mixed with a positive one', async () => {
+    // Measured: a stray negative mz forged splash10-0udi-9000000000-... with
+    // zero validation errors before this guard existed, because
+    // calculateSplash's own finiteness check has no opinion on sign.
+    await expect(
+      buildRecord({
+        ...minimal(),
+        PK$PEAK: [
+          { mz: -50, intensity: 1000, relativeIntensity: 999 },
+          { mz: 200, intensity: 100, relativeIntensity: 100 },
+        ],
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+
+  it('names the offending row in the error message', async () => {
+    await expect(
+      buildRecord({
+        ...minimal(),
+        PK$PEAK: [
+          { mz: 100.25, intensity: 100, relativeIntensity: 999 },
+          { mz: -205.5, intensity: 50, relativeIntensity: 100 },
+        ],
+      }),
+    ).rejects.toThrow(/205\.5/);
+  });
+
+  it('accepts a zero mz', async () => {
+    const record = await buildRecord({
+      ...minimal(),
+      PK$PEAK: [{ mz: 0, intensity: 1000, relativeIntensity: 999 }],
+    });
+
+    expect(record.PK$PEAK?.[0]?.mz).toBe(0);
+  });
+
+  it('does not reject a negative annotation mz', async () => {
+    // Unlike a peak's mz, an annotation's mz never reaches calculateSplash,
+    // and "-50" parses back to -50 exactly (Number.parseFloat has no
+    // trouble with a leading sign), so there is no forged-hash risk and no
+    // round-trip risk to guard against here — measured, not assumed.
+    const record = await buildRecord({
+      ...minimal(),
+      PK$ANNOTATION: [{ mz: -50, annotation: 'fragment' }],
+    });
+    const once = serializeRecord(record);
+    const reparsed = parseRecord(once);
+
+    expect(record.PK$ANNOTATION?.[0]?.mz).toBe(-50);
+    expect(stripOriginal(reparsed.PK$ANNOTATION)).toStrictEqual(
+      record.PK$ANNOTATION,
+    );
   });
 });
 
@@ -775,18 +963,45 @@ describe('buildRecord guards against parser-truncated PK$ANNOTATION columns', ()
   // the source line in `_original` (table-parsers.ts) rather than in a typed
   // field. RecordDraft's Omit only blocks object literals, so a parsed
   // InternalRecord — whose PK$ANNOTATION rows carry `_original` at runtime —
-  // can still flow into buildRecord. Without a guard, buildRecord(parsed)
-  // would silently drop those extra columns and reprint the row under the
-  // canonical 4-column header as if it never had more.
+  // can still flow into buildRecord.
+  //
+  // An UNEDITED row like this prints as its own `_original` text verbatim
+  // (buildRecord(parseRecord(file)) — the flagship path), so nothing is
+  // dropped: no guard fires. The guard exists for when that `_original` is
+  // about to be discarded and the row rebuilt from typed fields alone — that
+  // happens the moment ANY row in the table has been edited (all-or-nothing,
+  // see buildRecord) — because at that point rebuilding this row really
+  // would drop the columns the parser never mapped, and reprint it under a
+  // header that still claims they exist.
 
-  it('throws when a parsed row carries more than 4 columns', async () => {
-    await expect(buildRecord(fiveColumnRecord())).rejects.toThrow(RangeError);
+  it('accepts and preserves an unedited row with more than 4 columns', async () => {
+    const record = await buildRecord(fiveColumnRecord());
+
+    expect(record.PK$ANNOTATION?.[0]).toStrictEqual({
+      mz: 59.0134,
+      annotation: 'C2H3O2-',
+      _original: '59.0134 C2H3O2- 1 59.0133 2.9',
+    });
+    expect(serializeRecord(record)).toContain('59.0134 C2H3O2- 1 59.0133 2.9');
+
+    const result = await validateRecord(record);
+
+    expect(result.success).toBe(true);
   });
 
-  it('names the row and the real column count in the error message', async () => {
-    await expect(buildRecord(fiveColumnRecord())).rejects.toThrow(
-      /row 0 \(mz 59\.0134\).*5 columns/,
-    );
+  it('throws when a row with more than 4 columns has been edited', async () => {
+    const parsed = fiveColumnRecord();
+    const edited = (parsed.PK$ANNOTATION ?? []).map((a) => ({
+      ...a,
+      mz: a.mz + 0.001,
+    }));
+
+    await expect(
+      buildRecord({ ...parsed, PK$ANNOTATION: edited }),
+    ).rejects.toThrow(RangeError);
+    await expect(
+      buildRecord({ ...parsed, PK$ANNOTATION: edited }),
+    ).rejects.toThrow(/row 0 .*5 columns/);
   });
 
   it('does not reject a parsed row a caller legitimately trimmed to 4 tokens', async () => {
@@ -803,6 +1018,7 @@ PK$ANNOTATION: m/z annotation exact_mass error(ppm)
       annotation: 'C2H3O2-',
       exactMass: 59.0133,
       errorPpm: 2.9,
+      _original: '59.0134 C2H3O2- 59.0133 2.9',
     });
   });
 
@@ -823,7 +1039,7 @@ PK$ANNOTATION: m/z annotation exact_mass error(ppm)
     });
   });
 
-  it('throws when a parsed 3-column row has a non-numeric third column', async () => {
+  it('accepts and preserves an unedited 3-column row with a non-numeric third column', async () => {
     // The 3-token branch only recovers the third column when it looks
     // numeric; otherwise it falls back to [mz, annotation] and drops it.
     // This is a real shape — lipid annotations carry a bracketed identity in
@@ -834,10 +1050,32 @@ PK$ANNOTATION: m/z num type
 //
 `);
 
-    await expect(buildRecord(parsed)).rejects.toThrow(RangeError);
-    await expect(buildRecord(parsed)).rejects.toThrow(
-      /row 0 \(mz 494\.35\).*3 columns/,
+    const record = await buildRecord(parsed);
+
+    expect(record.PK$ANNOTATION?.[0]).toStrictEqual({
+      mz: 494.35,
+      annotation: '1',
+      _original: '494.35 1 [lyso_PC(alkyl-18:0,-)]-',
+    });
+    expect(serializeRecord(record)).toContain(
+      '494.35 1 [lyso_PC(alkyl-18:0,-)]-',
     );
+  });
+
+  it('throws when an edited 3-column row with a non-numeric third column is rebuilt', async () => {
+    const parsed = parseRecord(`ACCESSION: MSBNK-test-TST00001
+PK$ANNOTATION: m/z num type
+  494.35 1 [lyso_PC(alkyl-18:0,-)]-
+//
+`);
+    const edited = (parsed.PK$ANNOTATION ?? []).map((a) => ({
+      ...a,
+      mz: a.mz + 0.001,
+    }));
+    const draft = { ...parsed, PK$ANNOTATION: edited };
+
+    await expect(buildRecord(draft)).rejects.toThrow(RangeError);
+    await expect(buildRecord(draft)).rejects.toThrow(/row 0 .*3 columns/);
   });
 
   it('does not reject a parsed 3-column row whose third column is numeric', async () => {
@@ -853,7 +1091,164 @@ PK$ANNOTATION: m/z annotation exact_mass
       mz: 100.25,
       annotation: 'fragment',
       exactMass: 100.24,
+      _original: '100.25 fragment 100.24',
     });
+  });
+});
+
+describe('property: buildRecord PK$ANNOTATION accept/reject matches round-trip reality', () => {
+  // A regression lock that only checks "does this throw" can drift out of
+  // sync with the parser and never notice — e.g. a change to table-parsers.ts's
+  // own numeric test could leave every hand-written case above green while
+  // buildRecord silently became over- or under-strict relative to what the
+  // parser actually does today. Each case below is classified against the
+  // REAL parser (via wouldRoundTripIfRebuilt), not against any verdict this
+  // file bakes in, so a buildRecord/parser disagreement in EITHER direction
+  // surfaces as a failure: a case classified "accepts" whose buildRecord call
+  // rejects fails via the unhandled rejection, and a case classified
+  // "rejects" whose buildRecord call resolves fails via `.rejects`.
+
+  describe('sweep 1: annotation optional fields x annotation text shapes', () => {
+    const mz = 100.25;
+    const exactMassValue = 194.0804;
+    const errorPpmValue = 1.2;
+    const textShapes: Record<string, string> = {
+      'non-numeric': 'fragment',
+      'prefix-numeric': '5-methyl',
+      empty: '',
+      whitespace: '   ',
+      'multi-word': 'loss of H2O',
+    };
+    const fieldCombos = [
+      { exactMass: false, errorPpm: false },
+      { exactMass: true, errorPpm: false },
+      { exactMass: false, errorPpm: true },
+      { exactMass: true, errorPpm: true },
+    ];
+
+    const cases: Array<{ label: string; row: Annotation }> = [];
+    for (const combo of fieldCombos) {
+      const comboLabel = `${combo.exactMass ? '+exactMass' : ''}${combo.errorPpm ? '+errorPpm' : ''}`;
+      const optional = {
+        ...(combo.exactMass ? { exactMass: exactMassValue } : {}),
+        ...(combo.errorPpm ? { errorPpm: errorPpmValue } : {}),
+      };
+
+      cases.push({
+        label: `no annotation${comboLabel || ' (bare mz)'}`,
+        row: { mz, ...optional },
+      });
+      for (const [shapeName, text] of Object.entries(textShapes)) {
+        cases.push({
+          label: `annotation=${shapeName}${comboLabel}`,
+          row: { mz, annotation: text, ...optional },
+        });
+      }
+    }
+
+    const accepted = cases.filter((c) => wouldRoundTripIfRebuilt(c.row));
+    const rejected = cases.filter((c) => !wouldRoundTripIfRebuilt(c.row));
+
+    it('classifies both accepted and rejected cases', () => {
+      expect(cases).toHaveLength(24);
+      expect(accepted.length).toBeGreaterThan(0);
+      expect(rejected.length).toBeGreaterThan(0);
+    });
+
+    it.each(accepted)('accepts and round-trips $label', async ({ row }) => {
+      const built = await buildRecord({ ...minimal(), PK$ANNOTATION: [row] });
+      const reparsed = parseRecord(serializeRecord(built));
+
+      expect(stripOriginal(reparsed.PK$ANNOTATION)).toStrictEqual(
+        stripOriginal(built.PK$ANNOTATION),
+      );
+    });
+
+    it.each(rejected)(
+      'rejects $label because rebuilding it would lose or change data',
+      async ({ row }) => {
+        await expect(
+          buildRecord({ ...minimal(), PK$ANNOTATION: [row] }),
+        ).rejects.toThrow(RangeError);
+      },
+    );
+  });
+
+  describe('sweep 2: numeric/non-numeric column patterns for 1 to 6 source columns', () => {
+    // Column 1 (mz) is always numeric — a non-numeric first token means the
+    // parser drops the whole line, which is not an interesting shape to
+    // sweep. Each of the remaining columns 2..N is independently either a
+    // representative numeric token or a representative non-numeric one:
+    // 2^0 + 2^1 + ... + 2^5 = 63 patterns across N = 1..6. Every row here is
+    // sourced from the real parser and left unedited, so the discarded-column
+    // guard never applies (see wasAnnotationRowEdited/preserveOriginals in
+    // build-record.ts — an unedited row always prints as its own source
+    // text, whatever its column count) — EXCEPT the 4-column branch, which
+    // maps every token unconditionally with no numeric test at all
+    // (table-parsers.ts): a non-numeric token in the exactMass or errorPpm
+    // position parses to NaN, which buildRecord must still refuse regardless
+    // of preservation. `isRepresentable` classifies exactly that, independent
+    // of buildRecord's own finiteness check.
+
+    const mzToken = '100.25';
+    const numericToken = '1.5';
+    const nonNumericToken = 'frag';
+
+    const cases: Array<{ label: string; row: AnnotationWithOriginal }> = [];
+    for (let columnCount = 1; columnCount <= 6; columnCount++) {
+      const trailingCount = columnCount - 1;
+      const patternCount = 2 ** trailingCount;
+
+      for (let pattern = 0; pattern < patternCount; pattern++) {
+        const tokens = [mzToken];
+        const shape: string[] = [];
+        for (let position = 0; position < trailingCount; position++) {
+          const isNumeric = ((pattern >> position) & 1) === 1;
+          tokens.push(isNumeric ? numericToken : nonNumericToken);
+          shape.push(isNumeric ? 'num' : 'text');
+        }
+        const row = parseAnnotationText(tokens.join(' '));
+        if (row !== undefined) {
+          cases.push({
+            label: `${columnCount} columns, pattern [${shape.join(',')}]`,
+            row,
+          });
+        }
+      }
+    }
+
+    const representable = cases.filter((c) => isRepresentable(c.row));
+    const unrepresentable = cases.filter((c) => !isRepresentable(c.row));
+
+    it('generates all 63 column patterns, some representable and some not', () => {
+      expect(cases).toHaveLength(63);
+      expect(representable.length).toBeGreaterThan(0);
+      expect(unrepresentable.length).toBeGreaterThan(0);
+    });
+
+    it.each(representable)('accepts and preserves $label', async ({ row }) => {
+      const built = await buildRecord({ ...minimal(), PK$ANNOTATION: [row] });
+
+      // Preservation must be verbatim: a reparse-of-serialize check alone
+      // cannot tell "preserved the real source" apart from "consistently
+      // truncated the real source".
+      expect(built.PK$ANNOTATION?.[0]?._original).toBe(row._original);
+
+      const reparsed = parseRecord(serializeRecord(built));
+
+      expect(stripOriginal(reparsed.PK$ANNOTATION)).toStrictEqual(
+        stripOriginal(built.PK$ANNOTATION),
+      );
+    });
+
+    it.each(unrepresentable)(
+      'rejects $label because a mapped numeric field is not finite',
+      async ({ row }) => {
+        await expect(
+          buildRecord({ ...minimal(), PK$ANNOTATION: [row] }),
+        ).rejects.toThrow(RangeError);
+      },
+    );
   });
 });
 
@@ -895,6 +1290,9 @@ describe('buildRecord against the sample fixtures', () => {
     'MSBNK-test-TST00001.txt',
     'MSBNK-test-TST00002.txt',
     'MSBNK-test-TST00003.txt',
+    // TST00004 carries a real 5-column PK$ANNOTATION table (trimmed from a
+    // MassBank.eu record) — the shape buildRecord used to reject outright.
+    'MSBNK-test-TST00004.txt',
   ];
 
   it.each(fixtures)('round-trips %s and validates green', async (name) => {
