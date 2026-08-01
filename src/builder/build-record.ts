@@ -32,25 +32,36 @@ function looksNumeric(value: string): boolean {
 }
 
 /**
- * A row parsed from a real PK$ANNOTATION table can carry more columns than
- * `Annotation` has fields — table-parsers.ts reads a row with more than 4
- * whitespace-delimited tokens by keeping only `mz` and the second token as
- * `annotation`, discarding every later column into `_original` (the raw
- * source line) rather than into a typed field. `RecordDraft` types
- * `PK$ANNOTATION` as `Annotation[]`, which has no `_original`, but a caller
- * can still pass a parsed `InternalRecord` through — the `Omit` only blocks
- * object literals, not variables — so `_original` can be present at
- * runtime even though the type says otherwise. When it is, and it has more
- * than 4 tokens, rebuilding from `{mz, annotation, exactMass, errorPpm}`
- * would silently drop those extra columns and reprint the row under the
- * canonical 4-column header as if it had never had more.
+ * A row parsed from a real PK$ANNOTATION table can carry a column the parser
+ * never mapped into any typed field. table-parsers.ts's per-token-count
+ * branches are positional, and not every branch accounts for every token:
  *
- * At 4 or fewer tokens the parsed fields fully represent the source row, so
- * a caller's own edits (which may legitimately reduce the field count, e.g.
- * clearing `errorPpm`) must not be rejected here.
+ * - 1, 2, or 4 tokens always map every token into a field, unconditionally:
+ *   `[mz]`, `[mz, annotation]`, or `[mz, annotation, exactMass, errorPpm]`.
+ * - 3 tokens map all 3 only when the THIRD token looks numeric (read as
+ *   `[mz, exactMass, errorPpm]` or `[mz, annotation, exactMass]`, depending
+ *   on the second token). When the third token does not look numeric, the
+ *   branch falls back to `[mz, annotation]` and drops the third token — a
+ *   real shape, e.g. lipid annotations such as
+ *   `"494.35 1 [lyso_PC(alkyl-18:0,-)]-"`.
+ * - 5 or more tokens: no branch handles this; the parser falls back to
+ *   `[mz, annotation]` and drops every token from the third onward.
+ *
+ * `RecordDraft` types `PK$ANNOTATION` as `Annotation[]`, which has no
+ * `_original`, but a caller can still pass a parsed `InternalRecord` through
+ * — the `Omit` only blocks object literals, not variables — so `_original`
+ * can be present at runtime even though the type says otherwise. When a
+ * token was dropped this way, rebuilding from the mapped fields alone would
+ * silently reprint the row without it, under a header that still claims the
+ * dropped column exists.
+ *
+ * A caller's own edits (which may legitimately reduce the token count, e.g.
+ * clearing `errorPpm`) are unaffected: this only inspects `_original`, which
+ * a hand-built draft row never carries.
  * @param row - the annotation row to check
  * @param index - the row's position in the draft, for error reporting
- * @throws {RangeError} when `_original` tokenises to more than 4 columns
+ * @throws {RangeError} when the parser did not map every token of
+ * `row._original` into a typed field
  */
 function assertNoDiscardedColumns(
   row: AnnotationWithOriginal,
@@ -59,10 +70,22 @@ function assertNoDiscardedColumns(
   if (row._original === undefined) {
     return;
   }
-  const tokenCount = row._original.trim().split(/\s+/).length;
-  if (tokenCount > 4) {
+  const parts = row._original.trim().split(/\s+/);
+  const tokenCount = parts.length;
+
+  if (tokenCount === 3) {
+    const third = parts[2];
+    if (third === undefined || !looksNumeric(third)) {
+      throw new RangeError(
+        `PK$ANNOTATION row ${index} (mz ${row.mz}): the source row has 3 columns, but the third column ("${third ?? ''}") does not look numeric, so the parser reads this row as [mz, annotation] only — the third column would be lost if this row is rebuilt.`,
+      );
+    }
+    return;
+  }
+
+  if (tokenCount >= 5) {
     throw new RangeError(
-      `PK$ANNOTATION row ${index} (mz ${row.mz}): the source row has ${tokenCount} columns, but the parsed fields (mz, annotation, exactMass, errorPpm) represent only the first four — columns beyond the fourth would be lost if this row is rebuilt.`,
+      `PK$ANNOTATION row ${index} (mz ${row.mz}): the source row has ${tokenCount} columns, but the parser has no format beyond 4 columns and reads it as [mz, annotation] only — columns beyond the second would be lost if this row is rebuilt.`,
     );
   }
 }
@@ -233,6 +256,69 @@ function assertValidRelativeIntensity(peak: Peak, index: number): void {
 }
 
 /**
+ * Every field record-serializer.ts writes verbatim into the output: a
+ * single-value field on its own line, or each element of an array-valued
+ * field on its own line each. `ACCESSION` is guarded separately in
+ * `buildRecord` — it also derives `validateRecord`'s filename and carries
+ * extra rules (non-empty, no padding) that don't apply to the fields here.
+ *
+ * parse-record.ts splits input on `/\r?\n/`, so the only character that
+ * starts a new line on reparse is `\n` (whether or not it's preceded by
+ * `\r`) — measured, not assumed: a bare `\r` with no `\n` survives a
+ * build → serialize → reparse round trip unchanged, because `.trim()` only
+ * strips it from the ends of a value, not from the middle. Rejecting `\r`
+ * here too would refuse content that reparses back to itself correctly.
+ */
+const VERBATIM_STRING_FIELDS = [
+  'DEPRECATED',
+  'RECORD_TITLE',
+  'DATE',
+  'AUTHORS',
+  'LICENSE',
+  'COPYRIGHT',
+  'PUBLICATION',
+  'PROJECT',
+  'CH$COMPOUND_CLASS',
+  'CH$FORMULA',
+  'CH$EXACT_MASS',
+  'CH$SMILES',
+  'CH$IUPAC',
+  'AC$INSTRUMENT',
+  'AC$INSTRUMENT_TYPE',
+  'SP$SCIENTIFIC_NAME',
+  'SP$LINEAGE',
+  'SP$SAMPLE',
+] as const satisfies ReadonlyArray<keyof RecordDraft>;
+
+const VERBATIM_ARRAY_FIELDS = [
+  'COMMENT',
+  'CH$NAME',
+  'CH$LINK',
+  'AC$MASS_SPECTROMETRY',
+  'AC$CHROMATOGRAPHY',
+  'MS$FOCUSED_ION',
+  'MS$DATA_PROCESSING',
+  'SP$LINK',
+] as const satisfies ReadonlyArray<keyof RecordDraft>;
+
+/**
+ * Reject a draft-supplied value the serializer would write verbatim if it
+ * contains a newline.
+ * @param fieldName - the field (or `field[index]` for an array element)
+ * being checked, for error reporting
+ * @param value - the draft-supplied string that will be written verbatim
+ * @throws {RangeError} when `value` contains a newline, which would inject
+ * whatever text follows it as forged lines once the record is reparsed
+ */
+function assertNoLineInjection(fieldName: string, value: string): void {
+  if (value.includes('\n')) {
+    throw new RangeError(
+      `${fieldName} must not contain a newline. It is written verbatim into the output, so a newline inside it would inject the text that follows it as forged lines once the record is reparsed.`,
+    );
+  }
+}
+
+/**
  * Normalise a draft into a canonical record.
  *
  * Validation cannot detect what this prevents: unsorted peaks, a wrong
@@ -259,16 +345,27 @@ function assertValidRelativeIntensity(peak: Peak, index: number): void {
  * negative. `relativeIntensity` is caller-owned — see
  * {@link assertValidRelativeIntensity} — and is never derived or rescaled.
  * @throws {RangeError} when `ACCESSION` contains a newline or carriage
- * return, which would inject extra header lines into the serialized record.
+ * return (which would inject extra header lines into the serialized
+ * record), is empty or whitespace-only (unreadable back — parseRecord treats
+ * an empty ACCESSION as missing), or has leading or trailing whitespace
+ * (trimmed away on reparse, so the reparsed value would differ from the one
+ * supplied).
+ * @throws {RangeError} when any other field record-serializer.ts writes
+ * verbatim (or an element of an array-valued one) contains a newline, which
+ * would inject the text that follows it as forged lines once the record is
+ * reparsed. See {@link VERBATIM_STRING_FIELDS} and
+ * {@link VERBATIM_ARRAY_FIELDS} for the full field list.
  * @throws {RangeError} when an annotation row cannot survive a PK$ANNOTATION
- * round-trip: the row's source text has more than 4 columns and would lose
- * data if rebuilt; `annotation` is empty, whitespace-only, or contains
- * internal whitespace; `mz`, `exactMass`, or `errorPpm` is not finite;
- * `exactMass` or `errorPpm` is set alone with no `annotation`; `errorPpm` is
- * set with `annotation` but no `exactMass`; or `annotation` looks numeric
- * while `exactMass` is set and `errorPpm` is not. See
- * {@link assertExpressibleAnnotation} for the full legal/illegal table and
- * why it is not simply "a prefix of `[annotation, exactMass, errorPpm]`".
+ * round-trip: the parser did not map every token of the row's source text
+ * into a typed field (a 3-column row whose third column doesn't look
+ * numeric, or 5 or more columns) and would lose data if rebuilt;
+ * `annotation` is empty, whitespace-only, or contains internal whitespace;
+ * `mz`, `exactMass`, or `errorPpm` is not finite; `exactMass` or `errorPpm`
+ * is set alone with no `annotation`; `errorPpm` is set with `annotation` but
+ * no `exactMass`; or `annotation` looks numeric while `exactMass` is set and
+ * `errorPpm` is not. See {@link assertExpressibleAnnotation} for the full
+ * legal/illegal table and why it is not simply "a prefix of
+ * `[annotation, exactMass, errorPpm]`".
  */
 export async function buildRecord(draft: RecordDraft): Promise<InternalRecord> {
   // ACCESSION is the one field buildRecord declares mandatory, and the field
@@ -279,6 +376,32 @@ export async function buildRecord(draft: RecordDraft): Promise<InternalRecord> {
     throw new RangeError(
       'ACCESSION must not contain a newline or carriage return.',
     );
+  }
+  const trimmedAccession = draft.ACCESSION.trim();
+  if (trimmedAccession.length === 0) {
+    throw new RangeError(
+      'ACCESSION must not be empty or whitespace-only — parseRecord treats an empty ACCESSION as missing and throws "ACCESSION field is required" on reparse.',
+    );
+  }
+  if (trimmedAccession !== draft.ACCESSION) {
+    throw new RangeError(
+      'ACCESSION must not have leading or trailing whitespace — parseRecord trims it on reparse, so the reparsed value would differ from the one supplied.',
+    );
+  }
+
+  for (const field of VERBATIM_STRING_FIELDS) {
+    const value = draft[field];
+    if (value !== undefined) {
+      assertNoLineInjection(field, value);
+    }
+  }
+  for (const field of VERBATIM_ARRAY_FIELDS) {
+    const values = draft[field];
+    if (values !== undefined) {
+      for (const [index, value] of values.entries()) {
+        assertNoLineInjection(`${field}[${index}]`, value);
+      }
+    }
   }
 
   const record: InternalRecord = { ...draft };

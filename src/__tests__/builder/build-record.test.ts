@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { buildRecord } from '../../builder/build-record.ts';
 import { validateRecord } from '../../builder/validate-record.ts';
 import { parseRecord } from '../../parser/parse-record.ts';
+import type { InternalRecord } from '../../record.ts';
 import { serializeRecord } from '../../serializer/record-serializer.ts';
 
 const minimal = () => ({
@@ -54,6 +55,35 @@ function stripOriginal<T extends { _original?: unknown }>(
   rows: T[] | undefined,
 ): Array<Omit<T, '_original'>> {
   return (rows ?? []).map(({ _original, ...rest }) => rest);
+}
+
+/**
+ * Normalise a record for a whole-record comparison across a build round
+ * trip. Omits exactly what `buildRecord` intentionally recomputes or
+ * replaces rather than preserves — `PK$SPLASH` (recomputed from the peaks),
+ * `PK$NUM_PEAK` (derived from the peak count), and `_PK$ANNOTATION_HEADER`
+ * (`buildRecord` always emits its own canonical header) — and strips
+ * `_original` from every peak/annotation row (see `stripOriginal`). Every
+ * other field must match exactly, or `buildRecord` silently dropped or
+ * mangled something it has no business touching.
+ * @param record - the record to normalise
+ * @returns the record with the recomputed fields omitted and `_original` stripped
+ */
+function normalizeForComparison(record: InternalRecord) {
+  const {
+    PK$SPLASH,
+    PK$NUM_PEAK,
+    _PK$ANNOTATION_HEADER,
+    PK$PEAK,
+    PK$ANNOTATION,
+    ...rest
+  } = record;
+
+  return {
+    ...rest,
+    PK$PEAK: stripOriginal(PK$PEAK),
+    PK$ANNOTATION: stripOriginal(PK$ANNOTATION),
+  };
 }
 
 describe('buildRecord normalises what validation cannot detect', () => {
@@ -313,6 +343,119 @@ describe('buildRecord rejects an ACCESSION that could inject header fields', () 
         ACCESSION: 'MSBNK-x-1\rAUTHORS: Attacker A',
       }),
     ).rejects.toThrow(RangeError);
+  });
+});
+
+describe('buildRecord rejects an ACCESSION that could not be read back', () => {
+  it('throws when ACCESSION is empty', async () => {
+    // serializeRecord emits "ACCESSION: ", and parseRecord treats an empty
+    // ACCESSION as missing and throws — this could never round-trip.
+    await expect(buildRecord({ ACCESSION: '' })).rejects.toThrow(RangeError);
+  });
+
+  it('throws when ACCESSION is whitespace-only', async () => {
+    await expect(buildRecord({ ACCESSION: '   ' })).rejects.toThrow(RangeError);
+  });
+
+  it('throws when ACCESSION has leading whitespace', async () => {
+    // parseRecord trims the value after the colon, so this would reparse to
+    // a different string than the one supplied.
+    await expect(
+      buildRecord({ ACCESSION: '  MSBNK-test-TST00001' }),
+    ).rejects.toThrow(RangeError);
+  });
+
+  it('throws when ACCESSION has trailing whitespace', async () => {
+    await expect(
+      buildRecord({ ACCESSION: 'MSBNK-test-TST00001  ' }),
+    ).rejects.toThrow(RangeError);
+  });
+
+  it('accepts an ACCESSION with no leading or trailing whitespace', async () => {
+    const record = await buildRecord({ ACCESSION: 'MSBNK-test-TST00001' });
+
+    expect(record.ACCESSION).toBe('MSBNK-test-TST00001');
+  });
+});
+
+describe('buildRecord rejects a newline in any field the serializer writes verbatim', () => {
+  // record-serializer.ts writes each of these fields — or, for an
+  // array-valued field, each element — onto its own line without escaping.
+  // A newline inside one would inject the text that follows it as forged
+  // lines once the record is reparsed. ACCESSION has its own guard above and
+  // is covered separately; this covers the rest of the verbatim surface.
+
+  const stringFields = [
+    'DEPRECATED',
+    'RECORD_TITLE',
+    'DATE',
+    'AUTHORS',
+    'LICENSE',
+    'COPYRIGHT',
+    'PUBLICATION',
+    'PROJECT',
+    'CH$COMPOUND_CLASS',
+    'CH$FORMULA',
+    'CH$EXACT_MASS',
+    'CH$SMILES',
+    'CH$IUPAC',
+    'AC$INSTRUMENT',
+    'AC$INSTRUMENT_TYPE',
+    'SP$SCIENTIFIC_NAME',
+    'SP$LINEAGE',
+    'SP$SAMPLE',
+  ] as const;
+
+  it.each(stringFields)('throws when %s contains a newline', async (field) => {
+    await expect(
+      buildRecord({
+        ...minimal(),
+        [field]: 'line one\nCOPYRIGHT: Copyright (C) Attacker',
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+
+  const arrayFields = [
+    'COMMENT',
+    'CH$NAME',
+    'CH$LINK',
+    'AC$MASS_SPECTROMETRY',
+    'AC$CHROMATOGRAPHY',
+    'MS$FOCUSED_ION',
+    'MS$DATA_PROCESSING',
+    'SP$LINK',
+  ] as const;
+
+  it.each(arrayFields)(
+    'throws when an element of %s contains a newline',
+    async (field) => {
+      await expect(
+        buildRecord({
+          ...minimal(),
+          [field]: ['line one\nCOPYRIGHT: Copyright (C) Attacker'],
+        }),
+      ).rejects.toThrow(RangeError);
+    },
+  );
+
+  it('names the offending field in the error message', async () => {
+    await expect(
+      buildRecord({
+        ...minimal(),
+        LICENSE: 'CC BY\nCOPYRIGHT: Copyright (C) Attacker',
+      }),
+    ).rejects.toThrow(/LICENSE/);
+  });
+
+  it('does not reject a bare carriage return with no newline', async () => {
+    // parse-record.ts splits on /\r?\n/ — a bare \r starts no new line, so a
+    // value containing one round-trips unchanged and must not be rejected.
+    const record = await buildRecord({
+      ...minimal(),
+      RECORD_TITLE: 'abc\rdef',
+    });
+
+    expect(record.RECORD_TITLE).toBe('abc\rdef');
   });
 });
 
@@ -679,6 +822,39 @@ PK$ANNOTATION: m/z annotation exact_mass error(ppm)
       exactMass: 194.0804,
     });
   });
+
+  it('throws when a parsed 3-column row has a non-numeric third column', async () => {
+    // The 3-token branch only recovers the third column when it looks
+    // numeric; otherwise it falls back to [mz, annotation] and drops it.
+    // This is a real shape — lipid annotations carry a bracketed identity in
+    // the third column, e.g. "494.35 1 [lyso_PC(alkyl-18:0,-)]-".
+    const parsed = parseRecord(`ACCESSION: MSBNK-test-TST00001
+PK$ANNOTATION: m/z num type
+  494.35 1 [lyso_PC(alkyl-18:0,-)]-
+//
+`);
+
+    await expect(buildRecord(parsed)).rejects.toThrow(RangeError);
+    await expect(buildRecord(parsed)).rejects.toThrow(
+      /row 0 \(mz 494\.35\).*3 columns/,
+    );
+  });
+
+  it('does not reject a parsed 3-column row whose third column is numeric', async () => {
+    const parsed = parseRecord(`ACCESSION: MSBNK-test-TST00001
+PK$ANNOTATION: m/z annotation exact_mass
+  100.25 fragment 100.24
+//
+`);
+
+    const record = await buildRecord(parsed);
+
+    expect(record.PK$ANNOTATION?.[0]).toStrictEqual({
+      mz: 100.25,
+      annotation: 'fragment',
+      exactMass: 100.24,
+    });
+  });
 });
 
 describe('the binding correctness property', () => {
@@ -730,11 +906,12 @@ describe('buildRecord against the sample fixtures', () => {
     const rebuilt = await buildRecord(parsed);
     const reparsed = parseRecord(serializeRecord(rebuilt));
 
-    expect(stripOriginal(reparsed.PK$PEAK)).toStrictEqual(
-      stripOriginal(parsed.PK$PEAK),
-    );
-    expect(stripOriginal(reparsed.PK$ANNOTATION)).toStrictEqual(
-      stripOriginal(parsed.PK$ANNOTATION),
+    // Whole-record comparison, not just the peak tables: buildRecord could
+    // silently drop or mangle any header field (RECORD_TITLE, DATE, AUTHORS,
+    // CH$*, AC$*, MS$*, SP$*) and a peak-tables-only check would never catch
+    // it — that copy step is exactly what this PR adds.
+    expect(normalizeForComparison(reparsed)).toStrictEqual(
+      normalizeForComparison(parsed),
     );
 
     const result = await validateRecord(rebuilt);
