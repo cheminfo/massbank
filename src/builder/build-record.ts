@@ -7,6 +7,9 @@ import type {
 } from '../record.ts';
 import { calculateSplash } from '../splash/calculate-splash.ts';
 
+import type { BuildError } from './exceptions.ts';
+import { BuildException } from './exceptions.ts';
+
 // A record under construction. PK$PEAK, PK$ANNOTATION, and
 // _PK$ANNOTATION_HEADER are typed out of the object-literal shape (the
 // `Omit`) because a draft can't declare a row's `_original` through this
@@ -146,35 +149,41 @@ function wasAnnotationRowEdited(row: AnnotationWithOriginal): boolean {
  * @param index - the row's position in the draft, for error reporting
  * @param preserveOriginals - true when no row in the table has been edited,
  * so this row's `_original` (if any) is being kept rather than discarded
- * @throws {RangeError} when `_original` is being discarded and the parser
- * did not map every token of `row._original` into a typed field
+ * @returns a `BuildError` when `_original` is being discarded and the
+ * parser did not map every token of `row._original` into a typed field
  */
-function assertNoDiscardedColumns(
+function checkAnnotationDiscardedColumns(
   row: AnnotationWithOriginal,
   index: number,
   preserveOriginals: boolean,
-): void {
+): BuildError | undefined {
   if (row._original === undefined || preserveOriginals) {
-    return;
+    return undefined;
   }
   const parts = row._original.trim().split(/\s+/);
   const tokenCount = parts.length;
+  const field = `PK$ANNOTATION[${index}]`;
 
   if (tokenCount === 3) {
     const third = parts[2];
     if (third === undefined || !looksNumeric(third)) {
-      throw new RangeError(
-        `PK$ANNOTATION row ${index} (mz ${row.mz}): the source row has 3 columns, but the third column ("${third ?? ''}") does not look numeric, so the parser reads this row as [mz, annotation] only — the third column would be lost if this row is rebuilt.`,
-      );
+      return {
+        code: 'ANNOTATION_DISCARDED_COLUMN',
+        field,
+        message: `PK$ANNOTATION row ${index} (mz ${row.mz}): the source row has 3 columns, but the third column ("${third ?? ''}") does not look numeric, so the parser reads this row as [mz, annotation] only — the third column would be lost if this row is rebuilt.`,
+      };
     }
-    return;
+    return undefined;
   }
 
   if (tokenCount >= 5) {
-    throw new RangeError(
-      `PK$ANNOTATION row ${index} (mz ${row.mz}): the source row has ${tokenCount} columns, but the parser has no format beyond 4 columns and reads it as [mz, annotation] only — columns beyond the second would be lost if this row is rebuilt.`,
-    );
+    return {
+      code: 'ANNOTATION_DISCARDED_COLUMN',
+      field,
+      message: `PK$ANNOTATION row ${index} (mz ${row.mz}): the source row has ${tokenCount} columns, but the parser has no format beyond 4 columns and reads it as [mz, annotation] only — columns beyond the second would be lost if this row is rebuilt.`,
+    };
   }
+  return undefined;
 }
 
 /**
@@ -189,22 +198,24 @@ function assertNoDiscardedColumns(
  * different cause.
  * @param row - the annotation row to check
  * @param index - the row's position in the draft, for error reporting
- * @throws {RangeError} when `annotation` cannot survive as the same string,
- * at the same token position, on reparse
+ * @returns a `BuildError` when `annotation` cannot survive as the same
+ * string, at the same token position, on reparse
  */
-function assertRoundTrippableAnnotationText(
+function checkAnnotationRoundTrippableText(
   row: Annotation,
   index: number,
-): void {
+): BuildError | undefined {
   if (row.annotation === undefined) {
-    return;
+    return undefined;
   }
   if (row.annotation.length === 0 || /\s/.test(row.annotation)) {
-    throw new RangeError(
-      `PK$ANNOTATION row ${index} (mz ${row.mz}): annotation ${JSON.stringify(row.annotation)} is empty, whitespace-only, contains internal whitespace, or has leading/trailing whitespace. ` +
-        'PK$ANNOTATION rows are whitespace-delimited tokens — such an annotation either changes the token count on reparse, or is trimmed away on reparse so the reparsed value is a different string.',
-    );
+    return {
+      code: 'ANNOTATION_TEXT_NOT_ROUND_TRIPPABLE',
+      field: `PK$ANNOTATION[${index}].annotation`,
+      message: `PK$ANNOTATION row ${index} (mz ${row.mz}): annotation ${JSON.stringify(row.annotation)} is empty, whitespace-only, contains internal whitespace, or has leading/trailing whitespace. PK$ANNOTATION rows are whitespace-delimited tokens — such an annotation either changes the token count on reparse, or is trimmed away on reparse so the reparsed value is a different string.`,
+    };
   }
+  return undefined;
 }
 
 /**
@@ -219,24 +230,36 @@ function assertRoundTrippableAnnotationText(
  * reparse as literally `NaN`/`Infinity` rather than being discarded.
  * @param row - the annotation row to check
  * @param index - the row's position in the draft, for error reporting
- * @throws {RangeError} when `mz`, `exactMass`, or `errorPpm` is not finite
+ * @returns a `BuildError` per non-finite field among `mz`, `exactMass`, and
+ * `errorPpm` — up to three, since they are independent facts about the row
  */
-function assertFiniteAnnotationValues(row: Annotation, index: number): void {
+function checkAnnotationFiniteValues(
+  row: Annotation,
+  index: number,
+): BuildError[] {
+  const errors: BuildError[] = [];
   if (!Number.isFinite(row.mz)) {
-    throw new RangeError(
-      `PK$ANNOTATION row ${index} (mz ${row.mz}): mz is not finite.`,
-    );
+    errors.push({
+      code: 'ANNOTATION_NOT_FINITE',
+      field: `PK$ANNOTATION[${index}].mz`,
+      message: `PK$ANNOTATION row ${index} (mz ${row.mz}): mz is not finite.`,
+    });
   }
   if (row.exactMass !== undefined && !Number.isFinite(row.exactMass)) {
-    throw new RangeError(
-      `PK$ANNOTATION row ${index} (mz ${row.mz}): exactMass ${row.exactMass} is not finite.`,
-    );
+    errors.push({
+      code: 'ANNOTATION_NOT_FINITE',
+      field: `PK$ANNOTATION[${index}].exactMass`,
+      message: `PK$ANNOTATION row ${index} (mz ${row.mz}): exactMass ${row.exactMass} is not finite.`,
+    });
   }
   if (row.errorPpm !== undefined && !Number.isFinite(row.errorPpm)) {
-    throw new RangeError(
-      `PK$ANNOTATION row ${index} (mz ${row.mz}): errorPpm ${row.errorPpm} is not finite.`,
-    );
+    errors.push({
+      code: 'ANNOTATION_NOT_FINITE',
+      field: `PK$ANNOTATION[${index}].errorPpm`,
+      message: `PK$ANNOTATION row ${index} (mz ${row.mz}): errorPpm ${row.errorPpm} is not finite.`,
+    });
   }
+  return errors;
 }
 
 /**
@@ -265,64 +288,69 @@ function assertFiniteAnnotationValues(row: Annotation, index: number): void {
  *   — the 3-token branch has no recovery for this shape: `errorPpm` is
  *   misread as `exactMass` and `annotation` is discarded.
  *
- * None of the four checks below can fire for a row that is about to print as
- * its own `_original` text rather than being rebuilt from these fields —
- * every shape the real parser can actually produce is one of the round-trip
- * cases above, never one of the throwing ones, so a genuinely unedited row
- * can never reach them. That also means skipping them when `preserveOriginals`
- * is true changes nothing for an unedited row; it only avoids a false
- * rejection if a future change to the parser's own numeric test ever drifts
- * out of sync with `looksNumeric` here.
+ * These four checks only run for a row that is actually about to be rebuilt
+ * from these fields — never for one printing as its own `_original` text
+ * (`preserveOriginals`, see the caller). That gate is currently unreachable
+ * by construction for a genuinely unedited, parser-derived row: every shape
+ * table-parsers.ts's 3-token branch can produce is one of the round-trip
+ * cases above, never one of the four below, so a row that survived parsing
+ * unedited can never trip them. Concretely, a value that LOOKS like it
+ * should hit the fourth check below — an `annotation` that looks numeric,
+ * e.g. `"100.25 5-methyl 194.08"` — never actually reaches this function
+ * with that shape: the parser's own 3-token branch tests the same thing
+ * first, via `Number.parseFloat`, and `Number.parseFloat('5-methyl')` is
+ * `5` (not `NaN`), so it takes the "both remaining tokens numeric" path and
+ * produces `{ mz: 100.25, exactMass: 5, errorPpm: 194.08 }` — `annotation`
+ * is never set at all, and the fourth check below requires `annotation` to
+ * be set. So this gate is not a dead check protecting nothing: it still
+ * fires for a hand-built row a caller assembles directly (no `_original`,
+ * so `preserveOriginals` is irrelevant to it) — only a *parsed, unedited*
+ * row can never reach it, because the parser's own decision already ruled
+ * out every shape that would trip it.
  * @param row - the annotation row to check
  * @param index - the row's position in the draft, for error reporting
- * @param preserveOriginals - true when no row in the table has been edited,
- * so this row's `_original` (if any) is being kept rather than discarded
- * @throws {RangeError} when the row cannot be serialized and reparsed as itself
+ * @returns a `BuildError` when the row cannot be serialized and reparsed as
+ * itself
  */
-function assertExpressibleAnnotation(
-  row: AnnotationWithOriginal,
+function checkAnnotationShape(
+  row: Annotation,
   index: number,
-  preserveOriginals: boolean,
-): void {
-  assertNoDiscardedColumns(row, index, preserveOriginals);
-  assertRoundTrippableAnnotationText(row, index);
-  assertFiniteAnnotationValues(row, index);
-
-  if (row._original !== undefined && preserveOriginals) {
-    return;
-  }
-
+): BuildError | undefined {
   const { annotation, exactMass, errorPpm, mz } = row;
+  const field = `PK$ANNOTATION[${index}]`;
 
   if (
     annotation === undefined &&
     exactMass !== undefined &&
     errorPpm === undefined
   ) {
-    throw new RangeError(
-      `PK$ANNOTATION row ${index} (mz ${mz}): exactMass is set without annotation or errorPpm. ` +
-        'The parser reads a 2-token row as [mz, annotation] unconditionally, so this value would come back as annotation text, not exactMass.',
-    );
+    return {
+      code: 'ANNOTATION_UNREPRESENTABLE',
+      field,
+      message: `PK$ANNOTATION row ${index} (mz ${mz}): exactMass is set without annotation or errorPpm. The parser reads a 2-token row as [mz, annotation] unconditionally, so this value would come back as annotation text, not exactMass.`,
+    };
   }
   if (
     annotation === undefined &&
     exactMass === undefined &&
     errorPpm !== undefined
   ) {
-    throw new RangeError(
-      `PK$ANNOTATION row ${index} (mz ${mz}): errorPpm is set without annotation or exactMass. ` +
-        'The parser reads a 2-token row as [mz, annotation] unconditionally, so this value would come back as annotation text, not errorPpm.',
-    );
+    return {
+      code: 'ANNOTATION_UNREPRESENTABLE',
+      field,
+      message: `PK$ANNOTATION row ${index} (mz ${mz}): errorPpm is set without annotation or exactMass. The parser reads a 2-token row as [mz, annotation] unconditionally, so this value would come back as annotation text, not errorPpm.`,
+    };
   }
   if (
     annotation !== undefined &&
     exactMass === undefined &&
     errorPpm !== undefined
   ) {
-    throw new RangeError(
-      `PK$ANNOTATION row ${index} (mz ${mz}): errorPpm is set without exactMass. ` +
-        'The parser has a 3-token recovery for [annotation, exactMass] and for [exactMass, errorPpm], but none for [annotation, errorPpm] — errorPpm would be misread as exactMass and annotation would be discarded.',
-    );
+    return {
+      code: 'ANNOTATION_UNREPRESENTABLE',
+      field,
+      message: `PK$ANNOTATION row ${index} (mz ${mz}): errorPpm is set without exactMass. The parser has a 3-token recovery for [annotation, exactMass] and for [exactMass, errorPpm], but none for [annotation, errorPpm] — errorPpm would be misread as exactMass and annotation would be discarded.`,
+    };
   }
   if (
     annotation !== undefined &&
@@ -330,11 +358,60 @@ function assertExpressibleAnnotation(
     errorPpm === undefined &&
     looksNumeric(annotation)
   ) {
-    throw new RangeError(
-      `PK$ANNOTATION row ${index} (mz ${mz}): annotation "${annotation}" looks numeric. ` +
-        'The parser reads a 3-token [annotation, exactMass] row by testing whether both remaining tokens are numeric; a numeric-looking annotation is then misread as exactMass and the real exactMass is misread as errorPpm.',
-    );
+    return {
+      code: 'ANNOTATION_UNREPRESENTABLE',
+      field,
+      message: `PK$ANNOTATION row ${index} (mz ${mz}): annotation "${annotation}" looks numeric. The parser reads a 3-token [annotation, exactMass] row by testing whether both remaining tokens are numeric; a numeric-looking annotation is then misread as exactMass and the real exactMass is misread as errorPpm.`,
+    };
   }
+  return undefined;
+}
+
+/**
+ * Run every PK$ANNOTATION row guard and collect every failure, rather than
+ * stopping at the first — the guards are pure and independent of each
+ * other's outcome.
+ * @param row - the annotation row to check
+ * @param index - the row's position in the draft, for error reporting
+ * @param preserveOriginals - true when no row in the table has been edited,
+ * so this row's `_original` (if any) is being kept rather than discarded
+ * @returns every `BuildError` this row fails, in guard order; empty when
+ * the row is fully expressible
+ */
+function checkAnnotationRow(
+  row: AnnotationWithOriginal,
+  index: number,
+  preserveOriginals: boolean,
+): BuildError[] {
+  const errors: BuildError[] = [];
+
+  const discardedColumn = checkAnnotationDiscardedColumns(
+    row,
+    index,
+    preserveOriginals,
+  );
+  if (discardedColumn) {
+    errors.push(discardedColumn);
+  }
+  const roundTrippableText = checkAnnotationRoundTrippableText(row, index);
+  if (roundTrippableText) {
+    errors.push(roundTrippableText);
+  }
+  errors.push(...checkAnnotationFiniteValues(row, index));
+
+  // A row printing as its own `_original` text is never rebuilt from these
+  // fields, so the shape check below (which only protects a rebuild) cannot
+  // apply — see checkAnnotationShape's docstring for why that gate is
+  // unreachable for a genuinely unedited row regardless.
+  if (row._original !== undefined && preserveOriginals) {
+    return errors;
+  }
+
+  const shape = checkAnnotationShape(row, index);
+  if (shape) {
+    errors.push(shape);
+  }
+  return errors;
 }
 
 /**
@@ -351,14 +428,21 @@ function assertExpressibleAnnotation(
  * values that were already correct in the source.
  * @param peak - the peak to check
  * @param index - the peak's position in the draft, for error reporting
- * @throws {RangeError} when `relativeIntensity` is not finite or is negative
+ * @returns a `BuildError` when `relativeIntensity` is not finite or is
+ * negative
  */
-function assertValidRelativeIntensity(peak: Peak, index: number): void {
+function checkPeakRelativeIntensity(
+  peak: Peak,
+  index: number,
+): BuildError | undefined {
   if (!Number.isFinite(peak.relativeIntensity) || peak.relativeIntensity < 0) {
-    throw new RangeError(
-      `PK$PEAK row ${index} (mz ${peak.mz}): relativeIntensity ${peak.relativeIntensity} is not finite or is negative.`,
-    );
+    return {
+      code: 'PEAK_INVALID_RELATIVE_INTENSITY',
+      field: `PK$PEAK[${index}].relativeIntensity`,
+      message: `PK$PEAK row ${index} (mz ${peak.mz}): relativeIntensity ${peak.relativeIntensity} is not finite or is negative.`,
+    };
   }
+  return undefined;
 }
 
 /**
@@ -373,30 +457,78 @@ function assertValidRelativeIntensity(peak: Peak, index: number): void {
  * reaches it.
  * @param peak - the peak to check
  * @param index - the peak's position in the draft, for error reporting
- * @throws {RangeError} when `mz` is negative
+ * @returns a `BuildError` when `mz` is negative
  */
-function assertValidPeakMz(peak: Peak, index: number): void {
+function checkPeakMz(peak: Peak, index: number): BuildError | undefined {
   if (peak.mz < 0) {
-    throw new RangeError(
-      `PK$PEAK row ${index} (mz ${peak.mz}): mz is negative. A negative m/z is not a real peak position, and calculateSplash's histogram bins by ` +
-        '"Math.trunc(mz / binSize) % HISTOGRAM_BINS", which aliases a negative mz onto the same bin as a small non-negative one instead of rejecting it.',
-    );
+    return {
+      code: 'PEAK_NEGATIVE_MZ',
+      field: `PK$PEAK[${index}].mz`,
+      message: `PK$PEAK row ${index} (mz ${peak.mz}): mz is negative. A negative m/z is not a real peak position, and calculateSplash's histogram bins by "Math.trunc(mz / binSize) % HISTOGRAM_BINS", which aliases a negative mz onto the same bin as a small non-negative one instead of rejecting it.`,
+    };
   }
+  return undefined;
+}
+
+/**
+ * Run every PK$PEAK row guard and collect every failure, rather than
+ * stopping at the first — `relativeIntensity` and `mz` are independent
+ * facts about the same peak, so both can be wrong at once.
+ * @param peak - the peak to check
+ * @param index - the peak's position in the draft, for error reporting
+ * @returns every `BuildError` this peak fails; empty when it is valid
+ */
+function checkPeak(peak: Peak, index: number): BuildError[] {
+  const errors: BuildError[] = [];
+  const relativeIntensity = checkPeakRelativeIntensity(peak, index);
+  if (relativeIntensity) {
+    errors.push(relativeIntensity);
+  }
+  const mz = checkPeakMz(peak, index);
+  if (mz) {
+    errors.push(mz);
+  }
+  return errors;
 }
 
 /**
  * Every field record-serializer.ts writes verbatim into the output: a
  * single-value field on its own line, or each element of an array-valued
  * field on its own line each. `ACCESSION` is guarded separately in
- * `buildRecord` — it also derives `validateRecord`'s filename and carries
- * extra rules (non-empty, no padding) that don't apply to the fields here.
+ * `buildRecord` — it also derives `validateRecord`'s filename, but otherwise
+ * now fails for exactly the same three reasons as the fields here (see
+ * `checkVerbatimText`, which `checkAccession` mirrors under its own error
+ * codes).
  *
- * parse-record.ts splits input on `/\r?\n/`, so the only character that
- * starts a new line on reparse is `\n` (whether or not it's preceded by
- * `\r`) — measured, not assumed: a bare `\r` with no `\n` survives a
- * build → serialize → reparse round trip unchanged, because `.trim()` only
- * strips it from the ends of a value, not from the middle. Rejecting `\r`
- * here too would refuse content that reparses back to itself correctly.
+ * parse-record.ts extracts a field's value with a single `.trim()`
+ * (parse-record.ts:91), and `String.prototype.trim()` strips more than
+ * plain spaces — tab, `\v`, `\f`, `\r`, `\n`, NBSP, EM SPACE, BOM, and every
+ * other Unicode space separator. Leading or trailing whitespace of any of
+ * those kinds is therefore silently dropped on reparse, never preserved. A
+ * single-value field also disappears from the output entirely when its
+ * value is the empty string, because record-serializer.ts guards every
+ * VERBATIM_STRING_FIELDS write with `if (record.FIELD)`, and `''` is falsy
+ * — checked as a separate rule from the whitespace one below, since
+ * `''.trim() === ''` passes that check trivially. An array-valued field
+ * element does NOT have the empty-string problem: record-serializer.ts's
+ * truthiness check there guards the array itself, not each element, so an
+ * empty-string element still gets its own `FIELD: ` line and reparses back
+ * to `''` unchanged — `checkVerbatimText` allows it for array elements.
+ *
+ * A bare interior `\r` (no `\n` immediately after it) is, measured directly
+ * against parse-record.ts, the one case that DOES reparse back to the
+ * identical string at this layer: the line-splitting regex `/\r?\n/` only
+ * treats `\r` as part of a line boundary when a `\n` immediately follows it,
+ * and `.trim()` never touches a character in the middle of a string. It is
+ * rejected here anyway, for a reason outside this file: `validateRecord`'s
+ * `SerializationRule` normalises ANY `\r` — interior or not — to `\n` before
+ * comparing (`originalText.replace(/\r\n?/g, '\n')`) but does not apply that
+ * same normalisation to the freshly reserialized side, so a record
+ * containing an interior `\r` is guaranteed to fail that rule every time it
+ * is checked. Banning `\r` outright here, exactly like `\n`, matches how
+ * `ACCESSION` has always treated it (see `checkAccession`, which never
+ * allowed an interior `\r` either) and avoids handing back a record that
+ * this library's own validator can never pass.
  */
 const VERBATIM_STRING_FIELDS = [
   'DEPRECATED',
@@ -429,6 +561,12 @@ const VERBATIM_ARRAY_FIELDS = [
   'MS$DATA_PROCESSING',
   'SP$LINK',
 ] as const satisfies ReadonlyArray<keyof InternalRecord>;
+
+// Exported for tests only, so build-record.test.ts can drive its field
+// sweeps from the same lists buildRecord actually iterates instead of a
+// hand-copied duplicate that silently stops covering a field the moment
+// these lists grow and the copy doesn't.
+export { VERBATIM_ARRAY_FIELDS, VERBATIM_STRING_FIELDS };
 
 /**
  * `InternalRecord` fields `buildRecord` deliberately does NOT write verbatim
@@ -478,20 +616,92 @@ type VerbatimFieldListsAreExhaustive =
   AssertNoUnclassifiedFields<UnclassifiedInternalRecordField>;
 
 /**
- * Reject a draft-supplied value the serializer would write verbatim if it
- * contains a newline.
+ * ACCESSION is the one field `buildRecord` declares mandatory, and the field
+ * `validateRecord` derives a filename from; `serializeRecord` writes it as
+ * the first line verbatim. It fails for the same three reasons as the other
+ * verbatim fields (see `checkVerbatimText`), just reported under its own
+ * error codes and with ACCESSION-specific wording, since ACCESSION missing
+ * or malformed is a different, more fundamental problem for a caller to
+ * read than an ordinary field being unusable.
+ * @param accession - the draft's `ACCESSION` value
+ * @returns a `BuildError` when `accession` contains a newline or carriage
+ * return (which would inject extra header lines into the serialized
+ * record), is empty or whitespace-only (unreadable back — parseRecord
+ * treats an empty ACCESSION as missing), or has leading or trailing
+ * whitespace (trimmed away on reparse, so the reparsed value would differ
+ * from the one supplied)
+ */
+function checkAccession(accession: string): BuildError | undefined {
+  if (/[\n\r]/.test(accession)) {
+    return {
+      code: 'ACCESSION_LINE_INJECTION',
+      field: 'ACCESSION',
+      message: 'ACCESSION must not contain a newline or carriage return.',
+    };
+  }
+  const trimmedAccession = accession.trim();
+  if (trimmedAccession.length === 0) {
+    return {
+      code: 'ACCESSION_EMPTY',
+      field: 'ACCESSION',
+      message:
+        'ACCESSION must not be empty or whitespace-only — parseRecord treats an empty ACCESSION as missing and throws "ACCESSION field is required" on reparse.',
+    };
+  }
+  if (trimmedAccession !== accession) {
+    return {
+      code: 'ACCESSION_WHITESPACE',
+      field: 'ACCESSION',
+      message:
+        'ACCESSION must not have leading or trailing whitespace — parseRecord trims it on reparse, so the reparsed value would differ from the one supplied.',
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Check a draft-supplied value the serializer would write verbatim, against
+ * the round-trip invariant this whole guard exists for: a value written
+ * verbatim must reparse back to the identical string. See the comment above
+ * `VERBATIM_STRING_FIELDS` for how each of the three checks below was
+ * derived and measured against parse-record.ts and record-serializer.ts.
  * @param fieldName - the field (or `field[index]` for an array element)
  * being checked, for error reporting
  * @param value - the draft-supplied string that will be written verbatim
- * @throws {RangeError} when `value` contains a newline, which would inject
- * whatever text follows it as forged lines once the record is reparsed
+ * @param allowEmpty - true for an array element (an empty string round-trips
+ * fine there); false for a single-value field (an empty string makes the
+ * whole field vanish on reparse)
+ * @returns a `BuildError` when `value` contains a newline or carriage
+ * return, is empty while `allowEmpty` is false, or has leading or trailing
+ * whitespace of any kind `String.prototype.trim()` strips
  */
-function assertNoLineInjection(fieldName: string, value: string): void {
-  if (value.includes('\n')) {
-    throw new RangeError(
-      `${fieldName} must not contain a newline. It is written verbatim into the output, so a newline inside it would inject the text that follows it as forged lines once the record is reparsed.`,
-    );
+function checkVerbatimText(
+  fieldName: string,
+  value: string,
+  allowEmpty: boolean,
+): BuildError | undefined {
+  if (/[\n\r]/.test(value)) {
+    return {
+      code: 'VERBATIM_LINE_INJECTION',
+      field: fieldName,
+      message: `${fieldName} must not contain a newline or carriage return. It is written verbatim into the output: a newline would inject the text that follows it as forged lines once the record is reparsed; a carriage return reparses back to the same string at this layer but is guaranteed to fail validateRecord's serialization round-trip rule, so it is rejected here too.`,
+    };
   }
+  if (!allowEmpty && value.length === 0) {
+    return {
+      code: 'VERBATIM_EMPTY',
+      field: fieldName,
+      message: `${fieldName} must not be empty — record-serializer.ts only writes this field when it is truthy, so an empty string would vanish from the output entirely instead of round-tripping.`,
+    };
+  }
+  if (value.trim() !== value) {
+    return {
+      code: 'VERBATIM_WHITESPACE',
+      field: fieldName,
+      message: `${fieldName} must not have leading or trailing whitespace — parse-record.ts trims the value after the colon on reparse, so the reparsed value would differ from the one supplied.`,
+    };
+  }
+  return undefined;
 }
 
 /**
@@ -507,92 +717,108 @@ function assertNoLineInjection(fieldName: string, value: string): void {
  * Never mutates its input. Output is NOT text-identical to a parsed source:
  * `100.2500` canonicalises to `100.25`. Round-trip fidelity is parse/serialize's
  * job; this function's contract is canonical output.
+ *
+ * Every guard below is pure and independent of the others' outcome, so all
+ * of them run and every failure is collected before anything throws —
+ * fixing one problem at a time across repeated calls is not required. Only
+ * once every guard has passed does this function touch `calculateSplash` or
+ * build the returned record; a draft with any guard failure never reaches
+ * that construction step.
  * @param draft - the record draft to canonicalise
  * @returns the canonicalised record
- * @throws {RangeError} when a peak's `mz` is negative — see
- * {@link assertValidPeakMz}.
+ * @throws {BuildException} when one or more guards fail: `ACCESSION` is
+ * missing, empty, whitespace-padded, or contains a newline/carriage return
+ * (see `checkAccession`); any other field record-serializer.ts writes
+ * verbatim (or an element of an array-valued one) is empty (single-value
+ * fields only), whitespace-padded, or contains a newline/carriage return
+ * (see `checkVerbatimText`, {@link VERBATIM_STRING_FIELDS}, and
+ * {@link VERBATIM_ARRAY_FIELDS} for the full field list); a peak's
+ * `relativeIntensity` is not finite or is negative, or a peak's `mz` is
+ * negative (see `checkPeakRelativeIntensity`/`checkPeakMz` — a negative
+ * `mz` is rejected here rather than left for `calculateSplash`, because
+ * `calculateSplash`'s histogram binning silently aliases a small negative
+ * `mz` onto the same bin as a small non-negative one instead of rejecting
+ * it); or a PK$ANNOTATION row cannot survive a round-trip — the parser did
+ * not map every token of the row's source text into a typed field, its
+ * `annotation` is empty/whitespace-only/contains internal whitespace, its
+ * `mz`/`exactMass`/`errorPpm` is not finite, or the combination of optional
+ * fields it sets cannot be expressed in the token-count format (see
+ * `checkAnnotationRow` and the functions it calls for the full legal/illegal
+ * table and why it is not simply "a prefix of
+ * `[annotation, exactMass, errorPpm]`"). `error.buildErrors` carries every
+ * failure found, each with a machine-readable `code` and the `field` (or
+ * `table[index]`/`table[index].field`) it came from — see
+ * {@link BuildException}.
  * @throws {RangeError} when the peak list is non-empty but cannot be hashed —
  * all-zero intensity, a negative intensity, or a non-finite `mz`/`intensity`.
  * An empty peak list is dropped rather than hashed, so it never reaches this
- * error. Note SplashRule swallows the same error; the builder does not,
- * because such a spectrum is not publishable.
- * @throws {RangeError} when a peak's `relativeIntensity` is not finite or is
- * negative. `relativeIntensity` is caller-owned — see
- * {@link assertValidRelativeIntensity} — and is never derived or rescaled.
- * @throws {RangeError} when `ACCESSION` contains a newline or carriage
- * return (which would inject extra header lines into the serialized
- * record), is empty or whitespace-only (unreadable back — parseRecord treats
- * an empty ACCESSION as missing), or has leading or trailing whitespace
- * (trimmed away on reparse, so the reparsed value would differ from the one
- * supplied).
- * @throws {RangeError} when any other field record-serializer.ts writes
- * verbatim (or an element of an array-valued one) contains a newline, which
- * would inject the text that follows it as forged lines once the record is
- * reparsed. See {@link VERBATIM_STRING_FIELDS} and
- * {@link VERBATIM_ARRAY_FIELDS} for the full field list.
- * @throws {RangeError} when an annotation row cannot survive a PK$ANNOTATION
- * round-trip and its `_original` is being discarded — either because at
- * least one row in the table was edited since it was parsed (see
- * {@link wasAnnotationRowEdited}), or because the row has no `_original` at
- * all (a hand-built row). A row whose `_original` is instead being preserved
- * (the whole table round-trips unedited) never throws for these reasons — it
- * prints as its own source text, not a rebuild — see
- * {@link assertNoDiscardedColumns}. The round-trip failures themselves: the
- * parser did not map every token of the row's source text into a typed field
- * (a 3-column row whose third column doesn't look numeric, or 5 or more
- * columns); `annotation` is empty, whitespace-only, or contains internal
- * whitespace; `mz`, `exactMass`, or `errorPpm` is not finite; `exactMass` or
- * `errorPpm` is set alone with no `annotation`; `errorPpm` is set with
- * `annotation` but no `exactMass`; or `annotation` looks numeric while
- * `exactMass` is set and `errorPpm` is not. See
- * {@link assertExpressibleAnnotation} for the full legal/illegal table and
- * why it is not simply "a prefix of `[annotation, exactMass, errorPpm]`".
+ * error. This comes from `calculateSplash` itself, after every guard above
+ * has already passed, so it is not part of `BuildException`. Note
+ * SplashRule swallows the same error; the builder does not, because such a
+ * spectrum is not publishable.
  */
 export async function buildRecord(draft: RecordDraft): Promise<InternalRecord> {
-  // ACCESSION is the one field buildRecord declares mandatory, and the field
-  // validateRecord derives a filename from. serializeRecord writes it as the
-  // first line verbatim, so a newline or carriage return inside it injects
-  // whatever text follows as forged header lines (e.g. a fake AUTHORS).
-  if (/[\n\r]/.test(draft.ACCESSION)) {
-    throw new RangeError(
-      'ACCESSION must not contain a newline or carriage return.',
-    );
-  }
-  const trimmedAccession = draft.ACCESSION.trim();
-  if (trimmedAccession.length === 0) {
-    throw new RangeError(
-      'ACCESSION must not be empty or whitespace-only — parseRecord treats an empty ACCESSION as missing and throws "ACCESSION field is required" on reparse.',
-    );
-  }
-  if (trimmedAccession !== draft.ACCESSION) {
-    throw new RangeError(
-      'ACCESSION must not have leading or trailing whitespace — parseRecord trims it on reparse, so the reparsed value would differ from the one supplied.',
-    );
+  const errors: BuildError[] = [];
+
+  const accessionError = checkAccession(draft.ACCESSION);
+  if (accessionError) {
+    errors.push(accessionError);
   }
 
   for (const field of VERBATIM_STRING_FIELDS) {
     const value = draft[field];
     if (value !== undefined) {
-      assertNoLineInjection(field, value);
+      const error = checkVerbatimText(field, value, false);
+      if (error) {
+        errors.push(error);
+      }
     }
   }
   for (const field of VERBATIM_ARRAY_FIELDS) {
     const values = draft[field];
     if (values !== undefined) {
       for (const [index, value] of values.entries()) {
-        assertNoLineInjection(`${field}[${index}]`, value);
+        const error = checkVerbatimText(`${field}[${index}]`, value, true);
+        if (error) {
+          errors.push(error);
+        }
       }
     }
   }
 
+  const peaks = draft.PK$PEAK;
+  if (peaks !== undefined) {
+    for (const [index, peak] of peaks.entries()) {
+      errors.push(...checkPeak(peak, index));
+    }
+  }
+
+  const annotations = draft.PK$ANNOTATION;
+  // All-or-nothing per table, not per row: a table's `_PK$ANNOTATION_HEADER`
+  // is shared by every row in it, so it can only be kept or dropped as a
+  // unit. The moment any row has been edited, every row's `_original` is
+  // discarded and the row is rebuilt from typed fields instead — including
+  // rows that themselves were never touched, because a row whose real
+  // source column count wouldn't survive that rebuild must still be
+  // refused (checkAnnotationDiscardedColumns), and a mix of "printed
+  // verbatim" and "rebuilt" rows under one shared header would be
+  // inconsistent regardless.
+  const preserveOriginals =
+    annotations !== undefined &&
+    !annotations.some((row) => wasAnnotationRowEdited(row));
+  if (annotations !== undefined) {
+    for (const [index, row] of annotations.entries()) {
+      errors.push(...checkAnnotationRow(row, index, preserveOriginals));
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new BuildException(errors);
+  }
+
   const record: InternalRecord = { ...draft };
 
-  const peaks = draft.PK$PEAK;
   if (peaks !== undefined && peaks.length > 0) {
-    for (const [index, peak] of peaks.entries()) {
-      assertValidRelativeIntensity(peak, index);
-      assertValidPeakMz(peak, index);
-    }
     // Rebuild each peak from its numeric fields, discarding any _original a
     // caller smuggled through a structural type.
     const sorted = peaks
@@ -619,23 +845,7 @@ export async function buildRecord(draft: RecordDraft): Promise<InternalRecord> {
     delete record.PK$SPLASH;
   }
 
-  const annotations = draft.PK$ANNOTATION;
   if (annotations !== undefined && annotations.length > 0) {
-    // All-or-nothing per table, not per row: a table's `_PK$ANNOTATION_HEADER`
-    // is shared by every row in it, so it can only be kept or dropped as a
-    // unit. The moment any row has been edited, every row's `_original` is
-    // discarded and the row is rebuilt from typed fields instead — including
-    // rows that themselves were never touched, because a row whose real
-    // source column count wouldn't survive that rebuild must still be
-    // refused (assertNoDiscardedColumns), and a mix of "printed verbatim"
-    // and "rebuilt" rows under one shared header would be inconsistent
-    // regardless.
-    const preserveOriginals = !annotations.some((row) =>
-      wasAnnotationRowEdited(row),
-    );
-    for (const [index, row] of annotations.entries()) {
-      assertExpressibleAnnotation(row, index, preserveOriginals);
-    }
     record.PK$ANNOTATION = annotations
       .map((a: AnnotationWithOriginal) => ({
         mz: a.mz,
