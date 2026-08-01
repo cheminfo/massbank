@@ -117,12 +117,15 @@ Records whose annotation values contain a colon — lipid nomenclature such as `
 - Sorts both `PK$PEAK` and `PK$ANNOTATION` ascending by `mz`. Peaks keep their own `intensity` and `relativeIntensity` attached; annotation rows keep their own `annotation`/`exactMass`/`errorPpm` attached. A caller supplying either table in a deliberate order gets it silently reordered.
 - Derives `PK$NUM_PEAK` from the sorted peak count — a draft-supplied value is discarded.
 - Recomputes `PK$SPLASH` from the sorted peaks — a stale declared value is discarded, because a wrong SPLASH breaks cross-database matching silently, which is worse than a missing one.
-- Strips `_original` from peaks and annotations, so the serializer can't fall back to stale round-trip text captured by an earlier parse.
-- Drops an empty `PK$PEAK` or `PK$ANNOTATION` table rather than serializing a header with no rows. An empty peak list is **dropped, not hashed** — it never reaches the SPLASH computation and never throws.
+- Strips `_original` from peaks and annotations, so the serializer can't fall back to stale round-trip text captured by an earlier parse. This also replaces a parsed source's custom `PK$ANNOTATION` header (e.g. `m/z ion`) with the canonical four-column one (`m/z annotation exact_mass error(ppm)`), since the emitted rows no longer match whatever header the source had.
+- Drops an empty `PK$PEAK` or `PK$ANNOTATION` table, keeping the returned object's shape consistent with the `PK$NUM_PEAK`/`PK$SPLASH` deletes below rather than carrying an empty array. An empty peak list is **dropped, not hashed** — it never reaches the SPLASH computation and never throws.
 - Drops `PK$NUM_PEAK` and `PK$SPLASH` when there are no peaks, so a stale count or hash can't survive a peakless draft.
 - **Preserves duplicate `mz` values deliberately.** A duplicate can be a real instrument artifact; dropping the row loses data, and summing it invents a reading that was never measured.
-- **Rejects `PK$ANNOTATION` rows the format cannot express.** `PK$ANNOTATION` is read back by token count, not by a fixed field order, so the legal combinations of `annotation`/`exactMass`/`errorPpm` are not simply "a prefix": `{}`, `{annotation}` (any text), `{exactMass, errorPpm}`, `{annotation, exactMass}` (non-numeric `annotation` only), and the full `{annotation, exactMass, errorPpm}` all round-trip; `exactMass` or `errorPpm` alone, and `{annotation, errorPpm}` without `exactMass`, do not. `annotation` must also be non-empty with no whitespace, and `mz`, `exactMass`, and `errorPpm` must all be finite. See the throwing/legal combinations below.
-- Never mutates the draft passed in, but the returned record **shares array references** with it — `CH$NAME`, `COMMENT`, and `AC$MASS_SPECTROMETRY` are copied by reference, not deep-cloned. Mutating one of those arrays on the returned record mutates the same array on the original draft.
+- **Rejects `PK$ANNOTATION` rows the format cannot express.** `PK$ANNOTATION` is read back by token count, not by a fixed field order, so the legal combinations of `annotation`/`exactMass`/`errorPpm` are not simply "a prefix": `{}`, `{annotation}` (any text), `{exactMass, errorPpm}`, `{annotation, exactMass}` (only when `annotation` doesn't parse as a leading number — see below), and the full `{annotation, exactMass, errorPpm}` all round-trip; `exactMass` or `errorPpm` alone, and `{annotation, errorPpm}` without `exactMass`, do not. `annotation` must also be non-empty with no whitespace, and `mz`, `exactMass`, and `errorPpm` must all be finite. The check is `Number.parseFloat`-based, not "looks like text vs. looks like a number": a numeric-leading name such as `2-hydroxybenzoate` is rejected in this shape, common as that is in metabolomics nomenclature. See the throwing/legal combinations below.
+- **Rejects a row parsed from a real PK$ANNOTATION table that has more than 4 columns.** The parser keeps only the first two tokens of such a row (the rest is retained only as raw source text), so rebuilding from the parsed fields would silently drop those extra columns. This only applies to rows carrying that raw source text — a caller building a draft by hand cannot trigger it.
+- **Rejects a non-finite or negative `relativeIntensity`.** `relativeIntensity` never reaches the SPLASH computation, so it is the one numeric peak field that would otherwise pass through unchecked. `relativeIntensity` is caller-owned: `buildRecord` validates it but never computes or rescales it. The MassBank convention is intensity scaled against the base peak (commonly to 999 or to 100), but the format does not fix which scale a given record uses, and deriving it on a `buildRecord(parseRecord(file))` round trip would silently rescale a value that was already correct in the source.
+- **Rejects an `ACCESSION` containing a newline or carriage return.** `ACCESSION` is written as the record's first line verbatim; a newline inside it would inject the following text as forged header lines once serialized.
+- Never mutates the draft passed in, but the returned record **shares array references** with it for every array-valued field it doesn't rebuild (e.g. `CH$NAME`, `COMMENT`, `AC$MASS_SPECTROMETRY`) — those are copied by reference, not deep-cloned. Mutating one of those arrays on the returned record mutates the same array on the original draft. `PK$PEAK` and `PK$ANNOTATION` are the exception: they're always rebuilt into fresh arrays.
 
 ```typescript
 // Duplicate m/z survive intact.
@@ -155,6 +158,9 @@ try {
 
 // An all-zero, negative, or non-finite spectrum can't be hashed, so
 // buildRecord throws instead of silently producing a record with no PK$SPLASH.
+// (A negative mz throws too, via a different guard, with a message that
+// reads as "empty or all-zero-intensity" even though the spectrum may be
+// neither.)
 try {
   await buildRecord({
     ACCESSION: 'MSBNK-test-TST00001',
@@ -172,11 +178,11 @@ Two limits are worth knowing:
 1. **The filename is derived from `ACCESSION`** (as `` `${record.ACCESSION}.txt` ``), because an `InternalRecord` carries no filename of its own. `AccessionMatchRule` therefore **cannot fail** on this path for any well-formed accession — a green result is not evidence the accession matches any external filename. Use `validate()` or `validateContent()` with the real filename to check that.
 2. **Mandatory fields and controlled vocabularies are not checked**, same as `validate`/`validateContent` today (see [MassBank Format 2.6.0 Compliance](#massbank-format-260-compliance)). A record containing only `ACCESSION` returns `success: true`. A green result means "round-trips and passes the current rule set," not "submittable to MassBank."
 
-> `validateRecord` is the strict/submission entry point from 0.5.0: new semantic checks will be added to it in minor releases. `validate` and `validateContent` keep their current rule set.
+> `validateRecord` is intended to become the strict/submission entry point: new semantic checks (mandatory fields, controlled vocabularies) will land on it first in future releases, ahead of `validate`/`validateContent`. It does not yet enforce anything beyond limit 2 above, and past behavior is not a guarantee of future behavior — a record that validates green today may not once those checks land.
 
 ### Additional exports
 
-0.5.0 also exports, from the package root:
+This package also exports, from the package root:
 
 - `parseRecord` and `serializeRecord` — the parser and serializer `buildRecord`/`validateRecord` are built on
 - `ParseException` — the error `parseRecord` throws on malformed input
@@ -235,7 +241,7 @@ Normalize a record draft into a canonical record. See [Builder API](#builder-api
 
 **Returns:** `Promise<InternalRecord>`
 
-**Throws:** `RangeError` if a non-empty `PK$PEAK` cannot be hashed (all-zero intensity, a negative intensity, or a non-finite `mz`/`intensity`), or if a `PK$ANNOTATION` row cannot survive a round-trip — see [Builder API](#builder-api) above for the full legal/illegal combinations
+**Throws:** `RangeError` if a non-empty `PK$PEAK` cannot be hashed (all-zero intensity, a negative intensity, a negative `mz`, or a non-finite `mz`/`intensity`); if a peak's `relativeIntensity` is not finite or is negative; if `ACCESSION` contains a newline or carriage return; or if a `PK$ANNOTATION` row cannot survive a round-trip (including a parsed row with more than 4 columns) — see [Builder API](#builder-api) above for the full legal/illegal combinations
 
 ### `validateRecord(record, options?)`
 
