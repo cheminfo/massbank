@@ -1,3 +1,4 @@
+import { parseRecord } from '../parser/parse-record.ts';
 import type {
   Annotation,
   AnnotationWithOriginal,
@@ -6,13 +7,23 @@ import type {
 } from '../record.ts';
 import { calculateSplash } from '../splash/calculate-splash.ts';
 
-// A record under construction. _original and _PK$ANNOTATION_HEADER are typed
-// out here: they carry round-trip fidelity for text that was parsed, and the
-// serializer PREFERS them over the numeric fields — so a draft carrying them
-// would print stale rows under a freshly computed SPLASH. The `Omit` only
-// blocks object literals (TypeScript's excess-property check does not apply
-// to a variable of a wider type), so buildRecord also deletes
-// _PK$ANNOTATION_HEADER at runtime — see the delete below.
+// A record under construction. PK$PEAK, PK$ANNOTATION, and
+// _PK$ANNOTATION_HEADER are typed out of the object-literal shape (the
+// `Omit`) because a draft can't declare a row's `_original` through this
+// type — TypeScript's excess-property check only fires on object literals,
+// not on a variable of a wider type, so a caller can still pass a parsed
+// InternalRecord straight through and its rows/header arrive with
+// `_original` intact at runtime regardless.
+//
+// Peaks and annotations then diverge in what buildRecord does with that
+// smuggled `_original`: a peak's `_original` feeds a freshly recomputed
+// PK$SPLASH, so printing it verbatim could disagree with the hash — it is
+// therefore always stripped (every peak is rebuilt from its numeric fields).
+// An annotation row's `_original` never reaches PK$SPLASH, so the same risk
+// does not apply; buildRecord keeps a row's `_original` (and the table's
+// shared header) when NO row in the table has been edited since it was
+// parsed — see wasAnnotationRowEdited — and discards them, table-wide, the
+// moment any row has.
 export type RecordDraft = Partial<
   Omit<InternalRecord, 'PK$PEAK' | 'PK$ANNOTATION' | '_PK$ANNOTATION_HEADER'>
 > & {
@@ -29,6 +40,72 @@ export type RecordDraft = Partial<
  */
 function looksNumeric(value: string): boolean {
   return !Number.isNaN(Number.parseFloat(value));
+}
+
+/**
+ * Reparse a single PK$ANNOTATION row's `_original` source text through the
+ * real parser, to find out what it actually produces from that text today.
+ * There is no public entry point for a single line — table-parsers.ts has no
+ * exported per-line method — so this builds the smallest record that
+ * exercises the same code path. That is faithful because table rows are
+ * parsed one line at a time, independently of every other line and of the
+ * header text (table-parsers.ts's `AnnotationTableParser.parse` calls
+ * `parseAnnotationLine` per line; the header is only ever stored, never
+ * consulted to decide a line's shape) — so wrapping a single row in a
+ * minimal record reproduces exactly what parsing it as part of the original
+ * table produced.
+ * @param original - a row's `_original` source text
+ * @returns the annotation the parser produces from `original` today, or
+ * `undefined` if it drops the line entirely (e.g. a non-numeric first token)
+ */
+function reparseAnnotationOriginal(original: string): Annotation | undefined {
+  const parsed = parseRecord(
+    `ACCESSION: reparse-check\nPK$ANNOTATION: m/z\n  ${original}\n//\n`,
+  );
+  return parsed.PK$ANNOTATION?.[0];
+}
+
+/**
+ * Compare only the fields the parser can produce, ignoring `_original` and
+ * ignoring the boolean-only `annotation`/`exactMass`/`errorPpm` presence and
+ * comparing their actual values.
+ * @param a - a row's current typed fields
+ * @param b - what the parser produced from that row's `_original` today, or
+ * `undefined` if it dropped the line entirely
+ * @returns true when every field matches exactly
+ */
+function annotationTypedFieldsMatch(
+  a: Annotation,
+  b: Annotation | undefined,
+): boolean {
+  return (
+    b !== undefined &&
+    a.mz === b.mz &&
+    a.annotation === b.annotation &&
+    a.exactMass === b.exactMass &&
+    a.errorPpm === b.errorPpm
+  );
+}
+
+/**
+ * Whether a row's typed fields still match what its own `_original` source
+ * text reparses to today — measured directly rather than trusted, so a
+ * caller cannot claim a row is unedited by fiat. A row with no `_original`
+ * (freshly added by a caller, never parsed) has nothing to compare against
+ * and is therefore never itself "edited" by this definition — see where
+ * this is used for how such a row is still serialized correctly regardless.
+ * @param row - the annotation row to check
+ * @returns true when `row`'s typed fields diverge from a reparse of its own
+ * `_original`
+ */
+function wasAnnotationRowEdited(row: AnnotationWithOriginal): boolean {
+  if (row._original === undefined) {
+    return false;
+  }
+  return !annotationTypedFieldsMatch(
+    row,
+    reparseAnnotationOriginal(row._original),
+  );
 }
 
 /**
@@ -55,19 +132,29 @@ function looksNumeric(value: string): boolean {
  * silently reprint the row without it, under a header that still claims the
  * dropped column exists.
  *
+ * That is only a real loss when the row's `_original` is actually about to
+ * be discarded and rebuilt from typed fields. When `preserveOriginals` is
+ * true — the whole table round-trips unedited, see `wasAnnotationRowEdited`
+ * — this row prints as its own `_original` text verbatim instead, so a
+ * column the typed fields don't capture isn't lost, it just isn't reflected
+ * in `row.exactMass`/`row.errorPpm`; this check is a no-op in that case.
+ *
  * A caller's own edits (which may legitimately reduce the token count, e.g.
  * clearing `errorPpm`) are unaffected: this only inspects `_original`, which
  * a hand-built draft row never carries.
  * @param row - the annotation row to check
  * @param index - the row's position in the draft, for error reporting
- * @throws {RangeError} when the parser did not map every token of
- * `row._original` into a typed field
+ * @param preserveOriginals - true when no row in the table has been edited,
+ * so this row's `_original` (if any) is being kept rather than discarded
+ * @throws {RangeError} when `_original` is being discarded and the parser
+ * did not map every token of `row._original` into a typed field
  */
 function assertNoDiscardedColumns(
   row: AnnotationWithOriginal,
   index: number,
+  preserveOriginals: boolean,
 ): void {
-  if (row._original === undefined) {
+  if (row._original === undefined || preserveOriginals) {
     return;
   }
   const parts = row._original.trim().split(/\s+/);
@@ -177,14 +264,33 @@ function assertFiniteAnnotationValues(row: Annotation, index: number): void {
  * - `{annotation, errorPpm}` without `exactMass` (3 tokens) never round-trips
  *   — the 3-token branch has no recovery for this shape: `errorPpm` is
  *   misread as `exactMass` and `annotation` is discarded.
+ *
+ * None of the four checks below can fire for a row that is about to print as
+ * its own `_original` text rather than being rebuilt from these fields —
+ * every shape the real parser can actually produce is one of the round-trip
+ * cases above, never one of the throwing ones, so a genuinely unedited row
+ * can never reach them. That also means skipping them when `preserveOriginals`
+ * is true changes nothing for an unedited row; it only avoids a false
+ * rejection if a future change to the parser's own numeric test ever drifts
+ * out of sync with `looksNumeric` here.
  * @param row - the annotation row to check
  * @param index - the row's position in the draft, for error reporting
+ * @param preserveOriginals - true when no row in the table has been edited,
+ * so this row's `_original` (if any) is being kept rather than discarded
  * @throws {RangeError} when the row cannot be serialized and reparsed as itself
  */
-function assertExpressibleAnnotation(row: Annotation, index: number): void {
-  assertNoDiscardedColumns(row, index);
+function assertExpressibleAnnotation(
+  row: AnnotationWithOriginal,
+  index: number,
+  preserveOriginals: boolean,
+): void {
+  assertNoDiscardedColumns(row, index, preserveOriginals);
   assertRoundTrippableAnnotationText(row, index);
   assertFiniteAnnotationValues(row, index);
+
+  if (row._original !== undefined && preserveOriginals) {
+    return;
+  }
 
   const { annotation, exactMass, errorPpm, mz } = row;
 
@@ -251,6 +357,29 @@ function assertValidRelativeIntensity(peak: Peak, index: number): void {
   if (!Number.isFinite(peak.relativeIntensity) || peak.relativeIntensity < 0) {
     throw new RangeError(
       `PK$PEAK row ${index} (mz ${peak.mz}): relativeIntensity ${peak.relativeIntensity} is not finite or is negative.`,
+    );
+  }
+}
+
+/**
+ * `calculate-splash.ts` rejects a non-finite `mz` but not a negative one —
+ * `calculateHistogram`'s bin index is `Math.trunc(mz / binSize) % HISTOGRAM_BINS`,
+ * and `Math.trunc` rounds a small negative quotient towards zero rather than
+ * away from it, so e.g. `mz = -50` yields `Math.trunc(-0.5) === -0`, which
+ * aliases bin 0 exactly like a real peak at `mz = 0..4` would. The resulting
+ * SPLASH is computed and looks ordinary; it just silently misrepresents which
+ * bin the peak actually falls in, so a negative `mz` cannot be left for
+ * `calculateSplash` to catch — it must be rejected here, before any peak
+ * reaches it.
+ * @param peak - the peak to check
+ * @param index - the peak's position in the draft, for error reporting
+ * @throws {RangeError} when `mz` is negative
+ */
+function assertValidPeakMz(peak: Peak, index: number): void {
+  if (peak.mz < 0) {
+    throw new RangeError(
+      `PK$PEAK row ${index} (mz ${peak.mz}): mz is negative. A negative m/z is not a real peak position, and calculateSplash's histogram bins by ` +
+        '"Math.trunc(mz / binSize) % HISTOGRAM_BINS", which aliases a negative mz onto the same bin as a small non-negative one instead of rejecting it.',
     );
   }
 }
@@ -380,14 +509,13 @@ function assertNoLineInjection(fieldName: string, value: string): void {
  * job; this function's contract is canonical output.
  * @param draft - the record draft to canonicalise
  * @returns the canonicalised record
+ * @throws {RangeError} when a peak's `mz` is negative — see
+ * {@link assertValidPeakMz}.
  * @throws {RangeError} when the peak list is non-empty but cannot be hashed —
  * all-zero intensity, a negative intensity, or a non-finite `mz`/`intensity`.
- * A negative `mz` also throws, but via a different guard inside SPLASH's
- * histogram step, with a message that reads as "empty or all-zero-intensity"
- * even though the spectrum may be neither — see calculate-splash.ts. An empty
- * peak list is dropped rather than hashed, so it never reaches either error.
- * Note SplashRule swallows the same error; the builder does not, because such
- * a spectrum is not publishable.
+ * An empty peak list is dropped rather than hashed, so it never reaches this
+ * error. Note SplashRule swallows the same error; the builder does not,
+ * because such a spectrum is not publishable.
  * @throws {RangeError} when a peak's `relativeIntensity` is not finite or is
  * negative. `relativeIntensity` is caller-owned — see
  * {@link assertValidRelativeIntensity} — and is never derived or rescaled.
@@ -403,16 +531,22 @@ function assertNoLineInjection(fieldName: string, value: string): void {
  * reparsed. See {@link VERBATIM_STRING_FIELDS} and
  * {@link VERBATIM_ARRAY_FIELDS} for the full field list.
  * @throws {RangeError} when an annotation row cannot survive a PK$ANNOTATION
- * round-trip: the parser did not map every token of the row's source text
- * into a typed field (a 3-column row whose third column doesn't look
- * numeric, or 5 or more columns) and would lose data if rebuilt;
- * `annotation` is empty, whitespace-only, or contains internal whitespace;
- * `mz`, `exactMass`, or `errorPpm` is not finite; `exactMass` or `errorPpm`
- * is set alone with no `annotation`; `errorPpm` is set with `annotation` but
- * no `exactMass`; or `annotation` looks numeric while `exactMass` is set and
- * `errorPpm` is not. See {@link assertExpressibleAnnotation} for the full
- * legal/illegal table and why it is not simply "a prefix of
- * `[annotation, exactMass, errorPpm]`".
+ * round-trip and its `_original` is being discarded — either because at
+ * least one row in the table was edited since it was parsed (see
+ * {@link wasAnnotationRowEdited}), or because the row has no `_original` at
+ * all (a hand-built row). A row whose `_original` is instead being preserved
+ * (the whole table round-trips unedited) never throws for these reasons — it
+ * prints as its own source text, not a rebuild — see
+ * {@link assertNoDiscardedColumns}. The round-trip failures themselves: the
+ * parser did not map every token of the row's source text into a typed field
+ * (a 3-column row whose third column doesn't look numeric, or 5 or more
+ * columns); `annotation` is empty, whitespace-only, or contains internal
+ * whitespace; `mz`, `exactMass`, or `errorPpm` is not finite; `exactMass` or
+ * `errorPpm` is set alone with no `annotation`; `errorPpm` is set with
+ * `annotation` but no `exactMass`; or `annotation` looks numeric while
+ * `exactMass` is set and `errorPpm` is not. See
+ * {@link assertExpressibleAnnotation} for the full legal/illegal table and
+ * why it is not simply "a prefix of `[annotation, exactMass, errorPpm]`".
  */
 export async function buildRecord(draft: RecordDraft): Promise<InternalRecord> {
   // ACCESSION is the one field buildRecord declares mandatory, and the field
@@ -452,18 +586,12 @@ export async function buildRecord(draft: RecordDraft): Promise<InternalRecord> {
   }
 
   const record: InternalRecord = { ...draft };
-  // buildRecord always emits its own canonical header for PK$ANNOTATION, so a
-  // stale header carried in from a parsed InternalRecord must not survive —
-  // otherwise the serializer prints rows under a header that no longer
-  // matches them. The RecordDraft type omits this field for object literals,
-  // but a caller can still pass an InternalRecord (excess-property checks
-  // don't apply to variables), so this also has to be a runtime delete.
-  delete record._PK$ANNOTATION_HEADER;
 
   const peaks = draft.PK$PEAK;
   if (peaks !== undefined && peaks.length > 0) {
     for (const [index, peak] of peaks.entries()) {
       assertValidRelativeIntensity(peak, index);
+      assertValidPeakMz(peak, index);
     }
     // Rebuild each peak from its numeric fields, discarding any _original a
     // caller smuggled through a structural type.
@@ -493,21 +621,49 @@ export async function buildRecord(draft: RecordDraft): Promise<InternalRecord> {
 
   const annotations = draft.PK$ANNOTATION;
   if (annotations !== undefined && annotations.length > 0) {
+    // All-or-nothing per table, not per row: a table's `_PK$ANNOTATION_HEADER`
+    // is shared by every row in it, so it can only be kept or dropped as a
+    // unit. The moment any row has been edited, every row's `_original` is
+    // discarded and the row is rebuilt from typed fields instead — including
+    // rows that themselves were never touched, because a row whose real
+    // source column count wouldn't survive that rebuild must still be
+    // refused (assertNoDiscardedColumns), and a mix of "printed verbatim"
+    // and "rebuilt" rows under one shared header would be inconsistent
+    // regardless.
+    const preserveOriginals = !annotations.some((row) =>
+      wasAnnotationRowEdited(row),
+    );
     for (const [index, row] of annotations.entries()) {
-      assertExpressibleAnnotation(row, index);
+      assertExpressibleAnnotation(row, index, preserveOriginals);
     }
     record.PK$ANNOTATION = annotations
-      .map((a) => ({
+      .map((a: AnnotationWithOriginal) => ({
         mz: a.mz,
         ...(a.annotation === undefined ? {} : { annotation: a.annotation }),
         ...(a.exactMass === undefined ? {} : { exactMass: a.exactMass }),
         ...(a.errorPpm === undefined ? {} : { errorPpm: a.errorPpm }),
+        ...(preserveOriginals && a._original !== undefined
+          ? { _original: a._original }
+          : {}),
       }))
       .toSorted((a, b) => a.mz - b.mz);
+    if (preserveOriginals) {
+      // Keep whatever header the draft carried in (a parsed InternalRecord
+      // passed straight through — RecordDraft's Omit only blocks object
+      // literals, not variables) so the preserved rows print under the
+      // header they actually belong to, not buildRecord's default.
+    } else {
+      // buildRecord is about to emit fresh rows rebuilt from typed fields
+      // under its own canonical header, so a header carried in from a
+      // parsed InternalRecord must not survive — otherwise the serializer
+      // would print the rebuilt rows under a header describing the old ones.
+      delete record._PK$ANNOTATION_HEADER;
+    }
   } else {
     // Keep the canonical shape empty-table-free, matching the PK$NUM_PEAK
     // and PK$SPLASH deletes above rather than carrying an empty array.
     delete record.PK$ANNOTATION;
+    delete record._PK$ANNOTATION_HEADER;
   }
 
   return record;
