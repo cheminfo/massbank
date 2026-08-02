@@ -104,10 +104,10 @@ function stripOriginal<T extends { _original?: unknown }>(
  * verbatim (`preserveOriginals`, build-record.ts), meaning the reparsed
  * `_original` and header are expected to equal the fixture's own — a
  * mismatch here is a real defect, not a formatting difference. Comparing
- * them verbatim (rather than stripping, as an earlier version of this
- * helper did) is what makes this loop able to catch a header that silently
- * fell back to buildRecord's canonical default, or an `_original` silently
- * truncated or reformatted instead of preserved — a whole-object
+ * them verbatim, rather than stripping them, is what makes this loop able to
+ * catch a header that silently fell back to buildRecord's canonical
+ * default, or an `_original` silently truncated or reformatted instead of
+ * preserved — a whole-object
  * `stripOriginal` comparison could not tell either apart from success.
  * Every other field must match exactly too, or `buildRecord` silently
  * dropped or mangled something it has no business touching.
@@ -1717,6 +1717,31 @@ PK$ANNOTATION: m/z num type
     await expect(buildRecord(draft)).rejects.toThrow(
       /row 0 \(mz 494\.351\).*3 columns/,
     );
+
+    // Payload assertion, not just the message: ANNOTATION_DISCARDED_COLUMN
+    // has two emit sites (this 3-token/non-numeric-third branch, and the
+    // >=5-token branch covered elsewhere) — a message-only check here would
+    // stay green even if this branch's code were swapped for an unrelated
+    // one, since `.rejects.toThrow(BuildException)` only checks the class.
+    let caught: unknown;
+    try {
+      await buildRecord(draft);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BuildException);
+
+    const { buildErrors } = caught as BuildException;
+
+    expect(buildErrors).toHaveLength(1);
+    expect(buildErrors[0]).toMatchObject({
+      code: 'ANNOTATION_DISCARDED_COLUMN',
+      fieldName: 'PK$ANNOTATION',
+      rowIndex: 0,
+      field: 'PK$ANNOTATION[0]',
+    });
+    expect(buildErrors[0]).not.toHaveProperty('property');
   });
 
   it('does not reject a parsed 3-column row whose third column is numeric', async () => {
@@ -1921,9 +1946,12 @@ describe("buildRecord's BuildError payload is structured, not a message to parse
     );
   });
 
-  it('does not summarise the aggregate message at or under the threshold', async () => {
+  it('does not summarise the aggregate message at exactly the threshold, and pins its exact content', async () => {
     // Regression lock for formatMessage's SUMMARY_THRESHOLD boundary: three
     // failures must still print in full, one per line, not as a summary.
+    // Pinned to the exact string (not just length/shape) so a content bug —
+    // e.g. the wrong join character, or a dropped message — is caught even
+    // though it wouldn't change the line count.
     let caught: unknown;
     try {
       await buildRecord({
@@ -1939,10 +1967,43 @@ describe("buildRecord's BuildError payload is structured, not a message to parse
     const buildException = caught as BuildException;
 
     expect(buildException.buildErrors).toHaveLength(3);
-    expect(buildException.message).not.toContain(
-      'more (see error.buildErrors)',
+    expect(buildException.message).toBe(
+      [
+        'ACCESSION must not be empty or whitespace-only — parseRecord treats an empty ACCESSION as missing and throws "ACCESSION field is required" on reparse.',
+        'PK$PEAK[0].relativeIntensity: PK$PEAK row 0 (mz -1): relativeIntensity -5 is negative.',
+        'PK$PEAK[0].mz: PK$PEAK row 0 (mz -1): mz is negative. A negative m/z is not a real peak position, and calculateSplash\'s histogram bins by "Math.trunc(mz / binSize) % HISTOGRAM_BINS", which aliases a negative mz onto the same bin as a small non-negative one instead of rejecting it.',
+      ].join('\n'),
     );
-    expect(buildException.message.split('\n')).toHaveLength(3);
+  });
+
+  it('summarises at exactly one past the threshold, pinning the exact shown count and remaining count', async () => {
+    // Regression lock for the OTHER side of the SUMMARY_THRESHOLD boundary:
+    // 4 failures must summarise. Pinned to the exact string so a `slice(0, 3)`
+    // → `slice(0, 1)` regression, or an off-by-one in `remaining`, is caught —
+    // a loose regex like `and \d+ more` would pass either mutation silently.
+    let caught: unknown;
+    try {
+      await buildRecord({
+        ACCESSION: '',
+        DATE: '  x  ',
+        PK$PEAK: [{ mz: -1, intensity: 10, relativeIntensity: -5 }],
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BuildException);
+
+    const buildException = caught as BuildException;
+
+    expect(buildException.buildErrors).toHaveLength(4);
+    expect(buildException.message).toBe(
+      '4 problems building the record: ' +
+        'ACCESSION must not be empty or whitespace-only — parseRecord treats an empty ACCESSION as missing and throws "ACCESSION field is required" on reparse.; ' +
+        'DATE must not have leading or trailing whitespace — parse-record.ts trims the value after the colon on reparse, so the reparsed value would differ from the one supplied.; ' +
+        'PK$PEAK[0].relativeIntensity: PK$PEAK row 0 (mz -1): relativeIntensity -5 is negative.; ' +
+        'and 1 more (see error.buildErrors).',
+    );
   });
 
   it('does not double the field name in the aggregate message when a BuildError message already names it', async () => {
@@ -1961,6 +2022,30 @@ describe("buildRecord's BuildError payload is structured, not a message to parse
       /^ACCESSION: ACCESSION/,
     );
     expect((caught as BuildException).message).toMatch(/^ACCESSION must not/);
+  });
+
+  it('DOES prefix the field when the BuildError message does not already name it — the branch every PK$PEAK/PK$ANNOTATION message actually takes', async () => {
+    // Every annotation/peak-row message reads "PK$ANNOTATION row 0 (mz X): ..."
+    // — it names the ROW, not the `field` string ("PK$ANNOTATION[0]"), so
+    // `error.message.startsWith(error.field)` is false and formatMessage must
+    // add the "field: " prefix. The dedupe test above only ever exercises the
+    // OTHER branch (ACCESSION/VERBATIM messages, which do start with their
+    // field) — this pins the branch that was previously untested entirely.
+    let caught: unknown;
+    try {
+      await buildRecord({
+        ACCESSION: 'MSBNK-test-TST00001',
+        PK$ANNOTATION: [{ mz: 100.25, exactMass: 194.0804 }],
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BuildException);
+    expect((caught as BuildException).buildErrors).toHaveLength(1);
+    expect((caught as BuildException).message).toBe(
+      'PK$ANNOTATION[0]: PK$ANNOTATION row 0 (mz 100.25): exactMass is set without annotation or errorPpm. The parser reads a 2-token row as [mz, annotation] unconditionally, so this value would come back as annotation text, not exactMass.',
+    );
   });
 
   it('reports ACCESSION_LINE_INJECTION and ACCESSION_WHITESPACE with no rowIndex or property', async () => {
@@ -2330,7 +2415,7 @@ describe('buildRecord against the sample fixtures', () => {
     // Whole-record comparison, not just the peak tables: buildRecord could
     // silently drop or mangle any header field (RECORD_TITLE, DATE, AUTHORS,
     // CH$*, AC$*, MS$*, SP$*) and a peak-tables-only check would never catch
-    // it — that copy step is exactly what this PR adds.
+    // it.
     expect(normalizeForComparison(reparsed)).toStrictEqual(
       normalizeForComparison(parsed),
     );
