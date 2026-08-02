@@ -428,8 +428,13 @@ function checkAnnotationFiniteValues(
  * - `{exactMass}` or `{errorPpm}` alone (2 tokens) never round-trip — the
  *   2-token branch always reads the second token as `annotation`.
  * - `{annotation, errorPpm}` without `exactMass` (3 tokens) never round-trips
- *   — the 3-token branch has no recovery for this shape: `errorPpm` is
- *   misread as `exactMass` and `annotation` is discarded.
+ *   — the 3-token branch has no recovery for this shape, and WHICH field is
+ *   corrupted depends on whether `annotation` looks numeric (measured, not
+ *   a single uniform failure): if it does, both remaining tokens are read as
+ *   `[exactMass, errorPpm]`, so `annotation` is discarded but `errorPpm`
+ *   survives correctly in its own slot; if it doesn't, the branch reads
+ *   `[annotation, exactMass]` instead, so `annotation` survives but
+ *   `errorPpm` is misread as `exactMass`.
  *
  * These four checks only run for a row that is actually about to be rebuilt
  * from these fields — never for one printing as its own `_original` text
@@ -496,7 +501,7 @@ function checkAnnotationShape(
     return {
       code: 'ANNOTATION_ERROR_PPM_WITHOUT_EXACT_MASS',
       ...location,
-      message: `PK$ANNOTATION row ${index} (mz ${mz}): errorPpm is set without exactMass. The parser has a 3-token recovery for [annotation, exactMass] and for [exactMass, errorPpm], but none for [annotation, errorPpm] — errorPpm would be misread as exactMass and annotation would be discarded.`,
+      message: `PK$ANNOTATION row ${index} (mz ${mz}): errorPpm is set without exactMass. The parser's 3-token branch has no recovery for [annotation, errorPpm]: if annotation "${annotation}" looks numeric, both remaining tokens are read as [exactMass, errorPpm] and annotation is discarded (errorPpm survives correctly); if it is text, the branch reads [annotation, exactMass] instead, so errorPpm is misread as exactMass.`,
     };
   }
   if (
@@ -567,10 +572,10 @@ function checkAnnotationRow(
  * caller can still pass a parsed `MassBankRecord` through as a plain
  * variable, and it arrives with `_PK$ANNOTATION_HEADER` intact at runtime
  * regardless of what the type says. `draft[field]` in the generic
- * `VERBATIM_STRING_FIELDS` sweep above cannot reach this key at all — TypeScript
- * rejects indexing a `RecordDraft` with a key `Omit` removed from it — which
- * is exactly why this field needs its own accessor instead of joining that
- * sweep.
+ * `VERBATIM_STRING_FIELDS` sweep below (inside `buildRecord`) cannot reach
+ * this key at all — TypeScript rejects indexing a `RecordDraft` with a key
+ * `Omit` removed from it — which is exactly why this field needs its own
+ * accessor instead of joining that sweep.
  * @param draft - the record draft to read from
  * @returns the smuggled `_PK$ANNOTATION_HEADER` value, or `undefined` if the
  * draft never carried one
@@ -767,8 +772,9 @@ function checkPeak(peak: Peak, index: number): BuildError[] {
  * where `VERBATIM_STRING_FIELDS` is swept after `record` is built) instead
  * of refusing a draft the parser itself produces without complaint for
  * input like `RECORD_TITLE: ` — rejecting that would make `buildRecord`
- * strictly less capable than `parseRecord`, the exact defect this PR's
- * annotation-preservation work exists to avoid on the PK$ANNOTATION side.
+ * strictly less capable than `parseRecord`, the same defect the
+ * `_original`-preservation rule (see `preserveOriginals`) avoids on the
+ * PK$ANNOTATION side.
  * An array-valued field element is unaffected either way: record-serializer.ts's
  * truthiness check there guards the array itself, not each element, so an
  * empty-string element already gets its own `FIELD: ` line and reparses back
@@ -855,9 +861,9 @@ export { VERBATIM_ARRAY_FIELDS, VERBATIM_STRING_FIELDS };
  *
  * This list's name is a statement about the SERIALIZER's behaviour, and
  * nothing here checks that the statement is actually true for a given
- * field — `_PK$ANNOTATION_HEADER` compiled fine in this list for as long as
- * it was wrong, because `VerbatimFieldListsAreExhaustive` below only proves
- * every field appears in exactly one list, never that it's the RIGHT one.
+ * field — a field can compile fine in this list while being classified
+ * wrong, because `VerbatimFieldListsAreExhaustive` below only proves every
+ * field appears in exactly one list, never that it's the RIGHT one.
  * There is no cheap compile-time fix for that: which list a field belongs in
  * is a fact about record-serializer.ts's runtime behaviour, not something
  * the type system can see. The realistic mitigation is a runtime one: a
@@ -1025,49 +1031,34 @@ function checkVerbatimText(
  * that construction step.
  * @param draft - the record draft to canonicalise
  * @returns the canonicalised record
- * @throws {BuildException} when one or more guards fail: `ACCESSION` is
- * missing, empty, whitespace-padded, or contains a newline/carriage return
- * (see `checkAccession`); any other field record-serializer.ts writes
- * verbatim (or an element of an array-valued one) is whitespace-padded or
- * contains a newline/carriage return (see `checkVerbatimText`,
- * {@link VERBATIM_STRING_FIELDS}, and {@link VERBATIM_ARRAY_FIELDS} for the
- * full field list — an EMPTY single-value field is not one of these
- * failures; it is dropped instead, see below); a peak's `relativeIntensity`,
- * `mz`, or `intensity` is not finite, or a peak's `relativeIntensity`, `mz`,
- * or `intensity` is negative, or the whole `PK$PEAK` table has every
- * intensity at `0` (see `checkPeakRelativeIntensity`/`checkPeakMz`/
- * `checkPeakIntensity`/`checkPeakTableAllZeroIntensity` — the last three of
- * these mirror exactly what `calculateSplash` itself refuses to hash, folded
- * in here as `BuildError`s instead of letting a separate `RangeError` escape
- * from one entry point alongside `BuildException`; see `checkPeakIntensity`'s
- * docstring for how that duplication is kept from drifting out of sync); a
- * PK$ANNOTATION row's `_original` cannot be trusted to reparse safely — it
- * contains a newline/carriage return, reparsing it threw, or reparsing it
- * produced more than one row (see `reparseAnnotationOriginal`); the
- * annotation table's `_PK$ANNOTATION_HEADER` cannot round-trip either, when
- * the table is being preserved verbatim (see `checkVerbatimText` at its call
- * site below); or a PK$ANNOTATION row cannot survive a round-trip — the
- * parser did not map every token of the row's source text into a typed
- * field, its `annotation` is empty/whitespace-only/contains internal
- * whitespace, its `mz`/`exactMass`/`errorPpm` is not finite, or the
- * combination of optional fields it sets cannot be expressed in the
- * token-count format (see `checkAnnotationRow` and the functions it calls for
- * the full legal/illegal table and why it is not simply "a prefix of
- * `[annotation, exactMass, errorPpm]`"). `error.buildErrors` carries every
- * failure found, each with a machine-readable `code`, the structured
- * `fieldName`/`rowIndex`/`property` a caller can route on directly, and the
- * pre-formatted `field` display string built from them — see
- * {@link BuildException}.
+ * @throws {BuildException} the CONTRACT of which code fires when — see each
+ * named function's own docstring for the why:
+ * - `ACCESSION` missing, empty, whitespace-padded, or containing a
+ *   newline/carriage return (`checkAccession`).
+ * - Any other field record-serializer.ts writes verbatim (or an element of
+ *   an array-valued one) whitespace-padded or containing a newline/carriage
+ *   return — never for being empty (`checkVerbatimText`,
+ *   {@link VERBATIM_STRING_FIELDS}, {@link VERBATIM_ARRAY_FIELDS}).
+ * - A peak's `relativeIntensity`, `mz`, or `intensity` not finite or
+ *   negative, or the whole `PK$PEAK` table at all-zero intensity
+ *   (`checkPeakRelativeIntensity`, `checkPeakMz`, `checkPeakIntensity`,
+ *   `checkPeakTableAllZeroIntensity` — the last three mirror
+ *   `calculateSplash` itself, see `checkPeakIntensity`'s docstring).
+ * - A `PK$ANNOTATION` row's `_original` unsafe to reparse
+ *   (`reparseAnnotationOriginal`), its preserved `_PK$ANNOTATION_HEADER`
+ *   unsafe (`checkVerbatimText` at its call site below), or the row itself
+ *   unrepresentable — a dropped source column, an unrepresentable
+ *   `annotation`/numeric field, or an inexpressible optional-field
+ *   combination (`checkAnnotationRow` and the functions it calls; see
+ *   `checkAnnotationShape`'s docstring for the full legal/illegal table).
  *
- * `calculateSplash` itself no longer has a way to throw from this function:
- * every condition it would raise a `RangeError` for (empty peak list,
- * non-finite/negative `mz` or `intensity`, all-zero intensity) is refused
- * above first, and an empty peak list is dropped rather than reaching
- * `calculateSplash` at all (see below). `SplashRule` still calls
- * `calculateSplash` directly, without these guards, and still swallows its
- * `RangeError` ("skip rather than crash", since it is validating an
- * already-serialized record it cannot edit) — that asymmetry is real and
- * deliberate, just no longer visible from `buildRecord`'s own contract.
+ * `error.buildErrors` carries every failure found, each with a
+ * machine-readable `code`, the structured `fieldName`/`rowIndex`/`property`
+ * a caller can route on directly, and the pre-formatted `field` display
+ * string built from them — see {@link BuildException}. `calculateSplash`
+ * itself no longer has a way to throw from this function — see
+ * `checkPeakIntensity`'s docstring for the fold and the `SplashRule`
+ * asymmetry it leaves in place on the validation side.
  */
 export async function buildRecord(draft: RecordDraft): Promise<MassBankRecord> {
   const errors: BuildError[] = [];
