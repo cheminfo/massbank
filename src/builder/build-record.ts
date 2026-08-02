@@ -46,6 +46,25 @@ function looksNumeric(value: string): boolean {
 }
 
 /**
+ * Outcome of reparsing a single PK$ANNOTATION row's `_original` source text
+ * in isolation, via `reparseAnnotationOriginal`.
+ */
+interface AnnotationOriginalReparse {
+  /**
+   * What the parser produces from `_original` today, or `undefined` if it
+   * drops the line entirely (e.g. a non-numeric first token). Only
+   * meaningful when `error` is absent.
+   */
+  annotation: Annotation | undefined;
+  /**
+   * Set when `_original` cannot be trusted to print verbatim at all —
+   * see `reparseAnnotationOriginal` for the three cases this covers.
+   * `annotation` is always `undefined` alongside this.
+   */
+  error?: BuildError;
+}
+
+/**
  * Reparse a single PK$ANNOTATION row's `_original` source text through the
  * real parser, to find out what it actually produces from that text today.
  * There is no public entry point for a single line — table-parsers.ts has no
@@ -56,16 +75,85 @@ function looksNumeric(value: string): boolean {
  * `parseAnnotationLine` per line; the header is only ever stored, never
  * consulted to decide a line's shape) — so wrapping a single row in a
  * minimal record reproduces exactly what parsing it as part of the original
- * table produced.
+ * table produced, PROVIDED `original` really is a single line and really is
+ * safe to feed back through `parseRecord` — which is exactly what the three
+ * checks below confirm before any of the result is trusted:
+ *
+ * - A newline or carriage return in `original` would print as more than one
+ *   physical line once `_original` is written verbatim
+ *   (`  ${original}` in record-serializer.ts) — forging extra annotation
+ *   rows, or, if the injected line itself looks like `KEY: value`, a forged
+ *   header field. Rejected outright, before any reparse is attempted.
+ * - Even a single line is not guaranteed to just drop or misparse as an
+ *   annotation row: a line that looks like `KEY: value` for a real header
+ *   key (e.g. `PK$NUM_PEAK: notanumber`) ends the mini annotation table
+ *   early (table-parsers.ts's `startsNewField`) and is reparsed as that
+ *   header field instead — which can itself throw (`PeakFieldParser`
+ *   rejects a non-numeric `PK$NUM_PEAK`). That throw must not escape
+ *   `buildRecord` uncaught: it is caught here and reported as a
+ *   `BuildError` instead, so one poisoned row cannot abort validation
+ *   before every other guard has had a chance to run — and so it cannot
+ *   swallow an unrelated failure (e.g. a bad ACCESSION) that would
+ *   otherwise have been collected alongside it.
+ * - Reparsing is expected to produce exactly one annotation row. More than
+ *   one is unreachable once the newline check above holds — a single
+ *   physical line can only ever contribute one row — but is still checked
+ *   directly rather than assumed, in case that stops being true.
  * @param original - a row's `_original` source text
- * @returns the annotation the parser produces from `original` today, or
- * `undefined` if it drops the line entirely (e.g. a non-numeric first token)
+ * @param index - the row's position in the draft, for error reporting
+ * @param mz - the row's `mz`, for error reporting
+ * @returns the annotation the parser produces from `original` today (or
+ * `undefined` if it drops the line entirely), or a `BuildError` when
+ * `original` cannot be trusted to reparse safely at all
  */
-function reparseAnnotationOriginal(original: string): Annotation | undefined {
-  const parsed = parseRecord(
-    `ACCESSION: reparse-check\nPK$ANNOTATION: m/z\n  ${original}\n//\n`,
-  );
-  return parsed.PK$ANNOTATION?.[0];
+function reparseAnnotationOriginal(
+  original: string,
+  index: number,
+  mz: number,
+): AnnotationOriginalReparse {
+  const field = `PK$ANNOTATION[${index}]._original`;
+
+  if (/[\n\r]/.test(original)) {
+    return {
+      annotation: undefined,
+      error: {
+        code: 'ANNOTATION_ORIGINAL_LINE_INJECTION',
+        field,
+        message: `PK$ANNOTATION row ${index} (mz ${mz}): _original must not contain a newline or carriage return. It is written verbatim into the output when the table round-trips unedited, so a newline would inject the text that follows it as forged annotation rows, or — if the injected text itself looks like "KEY: value" — as a forged header field, once the record is reparsed.`,
+      },
+    };
+  }
+
+  let parsed: MassBankRecord;
+  try {
+    parsed = parseRecord(
+      `ACCESSION: reparse-check\nPK$ANNOTATION: m/z\n  ${original}\n//\n`,
+    );
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      annotation: undefined,
+      error: {
+        code: 'ANNOTATION_ORIGINAL_UNREADABLE',
+        field,
+        message: `PK$ANNOTATION row ${index} (mz ${mz}): _original could not be confirmed safe to preserve — reparsing it in isolation threw "${reason}" instead of producing a row.`,
+      },
+    };
+  }
+
+  const rows = parsed.PK$ANNOTATION ?? [];
+  if (rows.length > 1) {
+    return {
+      annotation: undefined,
+      error: {
+        code: 'ANNOTATION_ORIGINAL_UNREADABLE',
+        field,
+        message: `PK$ANNOTATION row ${index} (mz ${mz}): _original could not be confirmed safe to preserve — reparsing it in isolation produced ${rows.length} annotation rows instead of exactly 1.`,
+      },
+    };
+  }
+
+  return { annotation: rows[0] };
 }
 
 /**
@@ -95,20 +183,35 @@ function annotationTypedFieldsMatch(
  * text reparses to today — measured directly rather than trusted, so a
  * caller cannot claim a row is unedited by fiat. A row with no `_original`
  * (freshly added by a caller, never parsed) has nothing to compare against
- * and is therefore never itself "edited" by this definition — see where
- * this is used for how such a row is still serialized correctly regardless.
+ * and is therefore never itself "edited" by this definition. That alone does
+ * NOT make it eligible for table-wide preservation, though — see
+ * `buildRecord`'s `preserveOriginals`, which additionally requires every row
+ * to carry an `_original` at all.
+ *
+ * When `_original` cannot be confirmed safe to reparse at all — see
+ * `reparseAnnotationOriginal` for the three cases — this reports the row as
+ * edited, so it is never trusted to print verbatim, AND returns the
+ * `BuildError` that caused that, rather than letting the underlying
+ * exception escape `buildRecord` uncaught.
  * @param row - the annotation row to check
- * @returns true when `row`'s typed fields diverge from a reparse of its own
- * `_original`
+ * @param index - the row's position in the draft, for error reporting
+ * @returns `edited: true` when `row`'s typed fields diverge from a reparse
+ * of its own `_original`, or when that reparse could not be trusted at all
+ * (`error` is then set); `edited: false` when there is no `_original` to
+ * compare, or the reparse confirms the row is unchanged
  */
-function wasAnnotationRowEdited(row: AnnotationWithOriginal): boolean {
+function wasAnnotationRowEdited(
+  row: AnnotationWithOriginal,
+  index: number,
+): { edited: boolean; error?: BuildError } {
   if (row._original === undefined) {
-    return false;
+    return { edited: false };
   }
-  return !annotationTypedFieldsMatch(
-    row,
-    reparseAnnotationOriginal(row._original),
-  );
+  const reparse = reparseAnnotationOriginal(row._original, index, row.mz);
+  if (reparse.error) {
+    return { edited: true, error: reparse.error };
+  }
+  return { edited: !annotationTypedFieldsMatch(row, reparse.annotation) };
 }
 
 /**
@@ -420,6 +523,24 @@ function checkAnnotationRow(
 }
 
 /**
+ * Read `_PK$ANNOTATION_HEADER` off a draft despite `RecordDraft`'s type
+ * omitting that key entirely (see the module comment on `RecordDraft`) — a
+ * caller can still pass a parsed `MassBankRecord` through as a plain
+ * variable, and it arrives with `_PK$ANNOTATION_HEADER` intact at runtime
+ * regardless of what the type says. `draft[field]` in the generic
+ * `VERBATIM_STRING_FIELDS` sweep above cannot reach this key at all — TypeScript
+ * rejects indexing a `RecordDraft` with a key `Omit` removed from it — which
+ * is exactly why this field needs its own accessor instead of joining that
+ * sweep.
+ * @param draft - the record draft to read from
+ * @returns the smuggled `_PK$ANNOTATION_HEADER` value, or `undefined` if the
+ * draft never carried one
+ */
+function readAnnotationHeader(draft: RecordDraft): string | undefined {
+  return (draft as { _PK$ANNOTATION_HEADER?: string })._PK$ANNOTATION_HEADER;
+}
+
+/**
  * `relativeIntensity` is the one numeric peak field `calculateSplash` never
  * sees — `SplashPeak` is `{mz, intensity}` only — so a bad value here passes
  * silently through the SPLASH computation. Left unchecked, a non-finite
@@ -500,25 +621,32 @@ function checkPeak(peak: Peak, index: number): BuildError[] {
  * Every field record-serializer.ts writes verbatim into the output: a
  * single-value field on its own line, or each element of an array-valued
  * field on its own line each. `ACCESSION` is guarded separately in
- * `buildRecord` — it also derives `validateRecord`'s filename, but otherwise
- * now fails for exactly the same three reasons as the fields here (see
- * `checkVerbatimText`, which `checkAccession` mirrors under its own error
- * codes).
+ * `buildRecord`, under its own error codes — it also derives
+ * `validateRecord`'s filename and, unlike the fields here, is mandatory, so
+ * `checkAccession` still rejects an empty value; the fields here do not (see
+ * below).
  *
  * parse-record.ts extracts a field's value with a single `.trim()`
  * (parse-record.ts:91), and `String.prototype.trim()` strips more than
  * plain spaces — tab, `\v`, `\f`, `\r`, `\n`, NBSP, EM SPACE, BOM, and every
  * other Unicode space separator. Leading or trailing whitespace of any of
- * those kinds is therefore silently dropped on reparse, never preserved. A
- * single-value field also disappears from the output entirely when its
- * value is the empty string, because record-serializer.ts guards every
- * VERBATIM_STRING_FIELDS write with `if (record.FIELD)`, and `''` is falsy
- * — checked as a separate rule from the whitespace one below, since
- * `''.trim() === ''` passes that check trivially. An array-valued field
- * element does NOT have the empty-string problem: record-serializer.ts's
+ * those kinds is therefore silently dropped on reparse, never preserved.
+ *
+ * An empty single-value field is NOT rejected here — `checkVerbatimText` has
+ * no opinion on emptiness at all. record-serializer.ts guards every
+ * VERBATIM_STRING_FIELDS write with `if (record.FIELD)`, and `''` is falsy,
+ * so an empty value would vanish from the output regardless of what
+ * `buildRecord` does with it; `buildRecord` leans into that rather than
+ * fighting it, and canonicalises an empty single-value field to absent (see
+ * where `VERBATIM_STRING_FIELDS` is swept after `record` is built) instead
+ * of refusing a draft the parser itself produces without complaint for
+ * input like `RECORD_TITLE: ` — rejecting that would make `buildRecord`
+ * strictly less capable than `parseRecord`, the exact defect this PR's
+ * annotation-preservation work exists to avoid on the PK$ANNOTATION side.
+ * An array-valued field element is unaffected either way: record-serializer.ts's
  * truthiness check there guards the array itself, not each element, so an
- * empty-string element still gets its own `FIELD: ` line and reparses back
- * to `''` unchanged — `checkVerbatimText` allows it for array elements.
+ * empty-string element already gets its own `FIELD: ` line and reparses back
+ * to `''` unchanged — there was never anything to canonicalise for arrays.
  *
  * A bare interior `\r` (no `\n` immediately after it) is, measured directly
  * against parse-record.ts, the one case that DOES reparse back to the
@@ -574,12 +702,43 @@ const VERBATIM_ARRAY_FIELDS = [
 export { VERBATIM_ARRAY_FIELDS, VERBATIM_STRING_FIELDS };
 
 /**
- * `MassBankRecord` fields `buildRecord` deliberately does NOT write verbatim
- * from the draft: `ACCESSION` (guarded separately above, with its own
- * stricter rules — non-empty, no padding), the peak and annotation tables
- * (rebuilt row-by-row from typed fields, never copied as strings), and the
- * fields `buildRecord` always recomputes (`PK$SPLASH`, `PK$NUM_PEAK`) or
- * strips (`_PK$ANNOTATION_HEADER`).
+ * `MassBankRecord` fields exempt from the two generic sweeps above (
+ * `VERBATIM_STRING_FIELDS` / `VERBATIM_ARRAY_FIELDS`), either because
+ * record-serializer.ts never writes them verbatim from the draft at all —
+ * the peak table (always rebuilt row-by-row from typed fields, never copied
+ * as strings) and the fields `buildRecord` always recomputes (`PK$SPLASH`,
+ * `PK$NUM_PEAK`) — or because they genuinely ARE written verbatim but need
+ * bespoke validation the generic per-field loop can't give them, so they are
+ * guarded by their own dedicated call instead:
+ *
+ * - `ACCESSION` — mandatory and non-empty, unlike every other field here
+ *   (see `checkAccession`).
+ * - `PK$ANNOTATION` — each row is validated individually, with its own
+ *   per-row error codes (see `checkAnnotationRow`).
+ * - `_PK$ANNOTATION_HEADER` — written verbatim ONLY when the annotation
+ *   table's `_original` rows are being preserved (`preserveOriginals`); a
+ *   generic sweep over `draft` can't reach it at all, since `RecordDraft`'s
+ *   `Omit` drops this key from the type a caller can index through (see the
+ *   module comment on `RecordDraft`) — so it is read via
+ *   `readAnnotationHeader` and guarded with `checkVerbatimText` directly,
+ *   gated on `preserveOriginals`, right where `buildRecord` handles the
+ *   annotation table. (This entry used to justify its presence here by
+ *   claiming `buildRecord` "strips" the header unconditionally — true before
+ *   annotation-table preservation existed, false since: `preserveOriginals`
+ *   now keeps whatever header the draft carried in, verbatim, so a newline
+ *   in it reaches the output unguarded unless validated here.)
+ *
+ * This list's name is a statement about the SERIALIZER's behaviour, and
+ * nothing here checks that the statement is actually true for a given
+ * field — `_PK$ANNOTATION_HEADER` compiled fine in this list for as long as
+ * it was wrong, because `VerbatimFieldListsAreExhaustive` below only proves
+ * every field appears in exactly one list, never that it's the RIGHT one.
+ * There is no cheap compile-time fix for that: which list a field belongs in
+ * is a fact about record-serializer.ts's runtime behaviour, not something
+ * the type system can see. The realistic mitigation is a runtime one: a
+ * regression test that would fail if the guard for a "not written verbatim"
+ * field were ever removed or never added — see the `_PK$ANNOTATION_HEADER`
+ * newline-rejection test next to `checkVerbatimText`'s call site.
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- only used at the type level, by the exhaustiveness check below
 const NOT_WRITTEN_VERBATIM = [
@@ -623,11 +782,15 @@ type VerbatimFieldListsAreExhaustive =
 /**
  * ACCESSION is the one field `buildRecord` declares mandatory, and the field
  * `validateRecord` derives a filename from; `serializeRecord` writes it as
- * the first line verbatim. It fails for the same three reasons as the other
- * verbatim fields (see `checkVerbatimText`), just reported under its own
- * error codes and with ACCESSION-specific wording, since ACCESSION missing
- * or malformed is a different, more fundamental problem for a caller to
- * read than an ordinary field being unusable.
+ * the first line verbatim. It fails for the same two reasons as the other
+ * verbatim fields — a newline/carriage return, or leading/trailing
+ * whitespace, see `checkVerbatimText` — plus one ACCESSION-specific reason
+ * the other fields do NOT share: being mandatory, it also fails when empty
+ * or whitespace-only, where an ordinary field would simply be dropped (see
+ * `checkVerbatimText`'s docstring). Reported under its own error codes and
+ * with ACCESSION-specific wording, since ACCESSION missing or malformed is a
+ * different, more fundamental problem for a caller to read than an ordinary
+ * field being unusable.
  * @param accession - the draft's `ACCESSION` value
  * @returns a `BuildError` when `accession` contains a newline or carriage
  * return (which would inject extra header lines into the serialized
@@ -668,35 +831,29 @@ function checkAccession(accession: string): BuildError | undefined {
  * Check a draft-supplied value the serializer would write verbatim, against
  * the round-trip invariant this whole guard exists for: a value written
  * verbatim must reparse back to the identical string. See the comment above
- * `VERBATIM_STRING_FIELDS` for how each of the three checks below was
- * derived and measured against parse-record.ts and record-serializer.ts.
+ * `VERBATIM_STRING_FIELDS` for how each of the two checks below was derived
+ * and measured against parse-record.ts and record-serializer.ts.
+ *
+ * Deliberately has no opinion on an empty `value` — see the comment above
+ * `VERBATIM_STRING_FIELDS` for why an empty single-value field is
+ * canonicalised to absent rather than rejected here, and why an empty array
+ * element was never a problem in the first place.
  * @param fieldName - the field (or `field[index]` for an array element)
  * being checked, for error reporting
  * @param value - the draft-supplied string that will be written verbatim
- * @param allowEmpty - true for an array element (an empty string round-trips
- * fine there); false for a single-value field (an empty string makes the
- * whole field vanish on reparse)
  * @returns a `BuildError` when `value` contains a newline or carriage
- * return, is empty while `allowEmpty` is false, or has leading or trailing
- * whitespace of any kind `String.prototype.trim()` strips
+ * return, or has leading or trailing whitespace of any kind
+ * `String.prototype.trim()` strips
  */
 function checkVerbatimText(
   fieldName: string,
   value: string,
-  allowEmpty: boolean,
 ): BuildError | undefined {
   if (/[\n\r]/.test(value)) {
     return {
       code: 'VERBATIM_LINE_INJECTION',
       field: fieldName,
       message: `${fieldName} must not contain a newline or carriage return. It is written verbatim into the output: a newline would inject the text that follows it as forged lines once the record is reparsed; a carriage return reparses back to the same string at this layer but is guaranteed to fail validateRecord's serialization round-trip rule, so it is rejected here too.`,
-    };
-  }
-  if (!allowEmpty && value.length === 0) {
-    return {
-      code: 'VERBATIM_EMPTY',
-      field: fieldName,
-      message: `${fieldName} must not be empty — record-serializer.ts only writes this field when it is truthy, so an empty string would vanish from the output entirely instead of round-tripping.`,
     };
   }
   if (value.trim() !== value) {
@@ -734,18 +891,24 @@ function checkVerbatimText(
  * @throws {BuildException} when one or more guards fail: `ACCESSION` is
  * missing, empty, whitespace-padded, or contains a newline/carriage return
  * (see `checkAccession`); any other field record-serializer.ts writes
- * verbatim (or an element of an array-valued one) is empty (single-value
- * fields only), whitespace-padded, or contains a newline/carriage return
- * (see `checkVerbatimText`, {@link VERBATIM_STRING_FIELDS}, and
- * {@link VERBATIM_ARRAY_FIELDS} for the full field list); a peak's
- * `relativeIntensity` is not finite or is negative, or a peak's `mz` is
- * negative (see `checkPeakRelativeIntensity`/`checkPeakMz` — a negative
- * `mz` is rejected here rather than left for `calculateSplash`, because
- * `calculateSplash`'s histogram binning silently aliases a small negative
- * `mz` onto the same bin as a small non-negative one instead of rejecting
- * it); or a PK$ANNOTATION row cannot survive a round-trip — the parser did
- * not map every token of the row's source text into a typed field, its
- * `annotation` is empty/whitespace-only/contains internal whitespace, its
+ * verbatim (or an element of an array-valued one) is whitespace-padded or
+ * contains a newline/carriage return (see `checkVerbatimText`,
+ * {@link VERBATIM_STRING_FIELDS}, and {@link VERBATIM_ARRAY_FIELDS} for the
+ * full field list — an EMPTY single-value field is not one of these
+ * failures; it is dropped instead, see below); a peak's `relativeIntensity`
+ * is not finite or is negative, or a peak's `mz` is negative (see
+ * `checkPeakRelativeIntensity`/`checkPeakMz` — a negative `mz` is rejected
+ * here rather than left for `calculateSplash`, because `calculateSplash`'s
+ * histogram binning silently aliases a small negative `mz` onto the same bin
+ * as a small non-negative one instead of rejecting it); a PK$ANNOTATION
+ * row's `_original` cannot be trusted to reparse safely — it contains a
+ * newline/carriage return, reparsing it threw, or reparsing it produced more
+ * than one row (see `reparseAnnotationOriginal`); the annotation table's
+ * `_PK$ANNOTATION_HEADER` cannot round-trip either, when the table is being
+ * preserved verbatim (see `checkVerbatimText` at its call site below); or a
+ * PK$ANNOTATION row cannot survive a round-trip — the parser did not map
+ * every token of the row's source text into a typed field, its `annotation`
+ * is empty/whitespace-only/contains internal whitespace, its
  * `mz`/`exactMass`/`errorPpm` is not finite, or the combination of optional
  * fields it sets cannot be expressed in the token-count format (see
  * `checkAnnotationRow` and the functions it calls for the full legal/illegal
@@ -773,7 +936,7 @@ export async function buildRecord(draft: RecordDraft): Promise<MassBankRecord> {
   for (const field of VERBATIM_STRING_FIELDS) {
     const value = draft[field];
     if (value !== undefined) {
-      const error = checkVerbatimText(field, value, false);
+      const error = checkVerbatimText(field, value);
       if (error) {
         errors.push(error);
       }
@@ -783,7 +946,7 @@ export async function buildRecord(draft: RecordDraft): Promise<MassBankRecord> {
     const values = draft[field];
     if (values !== undefined) {
       for (const [index, value] of values.entries()) {
-        const error = checkVerbatimText(`${field}[${index}]`, value, true);
+        const error = checkVerbatimText(`${field}[${index}]`, value);
         if (error) {
           errors.push(error);
         }
@@ -799,21 +962,66 @@ export async function buildRecord(draft: RecordDraft): Promise<MassBankRecord> {
   }
 
   const annotations = draft.PK$ANNOTATION;
+  // Per-row edit/safety check, computed once up front so both
+  // `preserveOriginals` below and the per-row loop can reuse it without
+  // reparsing the same `_original` twice.
+  const annotationEdits = annotations?.map((row, index) =>
+    wasAnnotationRowEdited(row, index),
+  );
   // All-or-nothing per table, not per row: a table's `_PK$ANNOTATION_HEADER`
   // is shared by every row in it, so it can only be kept or dropped as a
-  // unit. The moment any row has been edited, every row's `_original` is
-  // discarded and the row is rebuilt from typed fields instead — including
-  // rows that themselves were never touched, because a row whose real
-  // source column count wouldn't survive that rebuild must still be
-  // refused (checkAnnotationDiscardedColumns), and a mix of "printed
-  // verbatim" and "rebuilt" rows under one shared header would be
+  // unit. Preserve ONLY when every row carries an `_original` AND none of
+  // them has been edited since it was parsed. Both halves matter:
+  // `wasAnnotationRowEdited` reports `edited: false` for a row with no
+  // `_original` at all (nothing to compare against), so a table where NO
+  // row has one would otherwise look "unanimously unedited" and wrongly
+  // inherit whatever stale `_PK$ANNOTATION_HEADER` the draft happened to
+  // carry — even though every row is about to be rebuilt from typed fields,
+  // with no verbatim row underneath that header to justify keeping it. The
+  // moment any row HAS been edited (or its `_original` could not be
+  // confirmed safe, see `reparseAnnotationOriginal`), every row's
+  // `_original` is discarded and the row is rebuilt from typed fields
+  // instead — including rows that themselves were never touched, because a
+  // row whose real source column count wouldn't survive that rebuild must
+  // still be refused (checkAnnotationDiscardedColumns), and a mix of
+  // "printed verbatim" and "rebuilt" rows under one shared header would be
   // inconsistent regardless.
   const preserveOriginals =
     annotations !== undefined &&
-    !annotations.some((row) => wasAnnotationRowEdited(row));
+    annotationEdits !== undefined &&
+    annotations.every(
+      (row: AnnotationWithOriginal) => row._original !== undefined,
+    ) &&
+    annotationEdits.every((check) => !check.edited);
   if (annotations !== undefined) {
     for (const [index, row] of annotations.entries()) {
+      const originalError = annotationEdits?.[index]?.error;
+      if (originalError) {
+        errors.push(originalError);
+      }
       errors.push(...checkAnnotationRow(row, index, preserveOriginals));
+    }
+  }
+
+  // _PK$ANNOTATION_HEADER is written verbatim ONLY when preserveOriginals
+  // holds (see below, where `record._PK$ANNOTATION_HEADER` is left
+  // untouched in that case) — so it is only worth guarding then; if
+  // preservation doesn't hold the header is deleted regardless of its
+  // content. See readAnnotationHeader for why this can't join the generic
+  // VERBATIM_STRING_FIELDS sweep above.
+  // _PK$ANNOTATION_HEADER is written verbatim ONLY when preserveOriginals
+  // holds (see below, where `record._PK$ANNOTATION_HEADER` is left
+  // untouched in that case) — so it is only worth guarding then; if
+  // preservation doesn't hold the header is deleted regardless of its
+  // content. See readAnnotationHeader for why this can't join the generic
+  // VERBATIM_STRING_FIELDS sweep above.
+  if (preserveOriginals) {
+    const header = readAnnotationHeader(draft);
+    if (header !== undefined) {
+      const headerError = checkVerbatimText('_PK$ANNOTATION_HEADER', header);
+      if (headerError) {
+        errors.push(headerError);
+      }
     }
   }
 
@@ -822,6 +1030,18 @@ export async function buildRecord(draft: RecordDraft): Promise<MassBankRecord> {
   }
 
   const record: MassBankRecord = { ...draft };
+
+  // An empty single-value verbatim field canonicalises to absent rather
+  // than being rejected — see the comment above VERBATIM_STRING_FIELDS and
+  // checkVerbatimText's docstring for why. record-serializer.ts would never
+  // print it anyway (it guards every write with `if (record.FIELD)`, and
+  // `''` is falsy), so this only removes a value that could never reach the
+  // output regardless.
+  for (const field of VERBATIM_STRING_FIELDS) {
+    if (record[field] === '') {
+      Reflect.deleteProperty(record, field);
+    }
+  }
 
   if (peaks !== undefined && peaks.length > 0) {
     // Rebuild each peak from its numeric fields, discarding any _original a
@@ -866,7 +1086,9 @@ export async function buildRecord(draft: RecordDraft): Promise<MassBankRecord> {
       // Keep whatever header the draft carried in (a parsed MassBankRecord
       // passed straight through — RecordDraft's Omit only blocks object
       // literals, not variables) so the preserved rows print under the
-      // header they actually belong to, not buildRecord's default.
+      // header they actually belong to, not buildRecord's default. Already
+      // validated above (readAnnotationHeader/checkVerbatimText) before the
+      // errors.length check, so nothing more to do here.
     } else {
       // buildRecord is about to emit fresh rows rebuilt from typed fields
       // under its own canonical header, so a header carried in from a

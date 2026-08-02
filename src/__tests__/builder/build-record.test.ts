@@ -69,29 +69,40 @@ function stripOriginal<T extends { _original?: unknown }>(
 /**
  * Normalise a record for a whole-record comparison across a build round
  * trip. Omits exactly what `buildRecord` intentionally recomputes or
- * replaces rather than preserves — `PK$SPLASH` (recomputed from the peaks),
- * `PK$NUM_PEAK` (derived from the peak count), and `_PK$ANNOTATION_HEADER`
- * (`buildRecord` always emits its own canonical header) — and strips
- * `_original` from every peak/annotation row (see `stripOriginal`). Every
- * other field must match exactly, or `buildRecord` silently dropped or
- * mangled something it has no business touching.
+ * replaces rather than preserves — `PK$SPLASH` (recomputed from the peaks)
+ * and `PK$NUM_PEAK` (derived from the peak count) — and strips `_original`
+ * from every peak row (see `stripOriginal`): a peak is ALWAYS rebuilt from
+ * its numeric fields (never preserved verbatim), so its reparsed
+ * `_original` reflects `Number.prototype.toString()`'s formatting of the
+ * canonicalised value (e.g. `100.2500` becomes `100.25`), not the fixture's
+ * original source text — comparing it would be a false failure, not a real
+ * check.
+ *
+ * `_PK$ANNOTATION_HEADER` and `PK$ANNOTATION` (including each row's
+ * `_original`) are deliberately NOT stripped, unlike peaks: every fixture
+ * this comparison runs against is round-tripped with no edits
+ * (`buildRecord(parsed)`, never a caller-modified draft — see the `it.each`
+ * loop below), so any annotation table present is always preserved
+ * verbatim (`preserveOriginals`, build-record.ts), meaning the reparsed
+ * `_original` and header are expected to equal the fixture's own — a
+ * mismatch here is a real defect, not a formatting difference. Comparing
+ * them verbatim (rather than stripping, as an earlier version of this
+ * helper did) is what makes this loop able to catch a header that silently
+ * fell back to buildRecord's canonical default, or an `_original` silently
+ * truncated or reformatted instead of preserved — a whole-object
+ * `stripOriginal` comparison could not tell either apart from success.
+ * Every other field must match exactly too, or `buildRecord` silently
+ * dropped or mangled something it has no business touching.
  * @param record - the record to normalise
- * @returns the record with the recomputed fields omitted and `_original` stripped
+ * @returns the record with the recomputed peak fields omitted and each
+ * peak's `_original` stripped
  */
 function normalizeForComparison(record: MassBankRecord) {
-  const {
-    PK$SPLASH,
-    PK$NUM_PEAK,
-    _PK$ANNOTATION_HEADER,
-    PK$PEAK,
-    PK$ANNOTATION,
-    ...rest
-  } = record;
+  const { PK$SPLASH, PK$NUM_PEAK, PK$PEAK, ...rest } = record;
 
   return {
     ...rest,
     PK$PEAK: stripOriginal(PK$PEAK),
-    PK$ANNOTATION: stripOriginal(PK$ANNOTATION),
   };
 }
 
@@ -388,6 +399,289 @@ describe('buildRecord normalises what validation cannot detect', () => {
   });
 });
 
+describe('buildRecord preserves a PK$ANNOTATION table per-row, not per-table-by-fiat', () => {
+  // Every test above this point uses a single-row table, where "no row was
+  // edited" and "the one row was not edited" are indistinguishable. These
+  // cover the table-wide all-or-nothing rule directly against a multi-row
+  // table, and the edit-detection predicate against fields other than mz.
+
+  it('discards every row _original once any row in the table is edited, even an untouched one', async () => {
+    const parsed = parseRecord(`ACCESSION: MSBNK-test-TST00001
+PK$ANNOTATION: m/z tentative_formula formula_count exact_mass error(ppm)
+  59.0134 C2H3O2- 1 59.0133 2.9
+  100.25 C5H4O2- 1 100.24 1.5
+//
+`);
+    // Only the FIRST row is edited; the second is left completely untouched.
+    const edited = (parsed.PK$ANNOTATION ?? []).map((a, index) =>
+      index === 0 ? { ...a, mz: a.mz + 0.001 } : a,
+    );
+    const draft = { ...parsed, PK$ANNOTATION: edited };
+
+    // Both rows have 5 columns, so once table-wide preservation is dropped,
+    // the untouched row (index 1) is ALSO run through
+    // checkAnnotationDiscardedColumns and refused — proving it was rebuilt
+    // and re-checked, not silently preserved because only the OTHER row
+    // changed.
+    await expect(buildRecord(draft)).rejects.toThrow(BuildException);
+    await expect(buildRecord(draft)).rejects.toThrow(/row 1 .*5 columns/);
+  });
+
+  it.each([
+    [
+      'annotation',
+      (a: AnnotationWithOriginal) => ({ ...a, annotation: 'changed' }),
+    ],
+    [
+      'exactMass',
+      (a: AnnotationWithOriginal) => ({
+        ...a,
+        exactMass: (a.exactMass ?? 0) + 1,
+      }),
+    ],
+    [
+      'errorPpm',
+      (a: AnnotationWithOriginal) => ({
+        ...a,
+        errorPpm: (a.errorPpm ?? 0) + 1,
+      }),
+    ],
+  ] as const)(
+    'drops _original when only %s is edited',
+    async (_field, edit) => {
+      const parsed = parseRecord(`ACCESSION: MSBNK-test-TST00001
+PK$ANNOTATION: m/z annotation exact_mass error(ppm)
+  100.25 fragment 100.24 1.5
+//
+`);
+      const row = (parsed.PK$ANNOTATION ?? [])[0];
+
+      expect(row).toBeDefined();
+      // Guard against a future fixture edit silently changing this row's shape
+      // out from under the sweep — every case above must edit a field this
+      // row actually has, or the "edit" is a no-op and the test proves nothing.
+      expect(row).toStrictEqual({
+        mz: 100.25,
+        annotation: 'fragment',
+        exactMass: 100.24,
+        errorPpm: 1.5,
+        _original: '100.25 fragment 100.24 1.5',
+      });
+
+      const edited = row === undefined ? [] : [edit(row)];
+      const rebuilt = await buildRecord({ ...parsed, PK$ANNOTATION: edited });
+
+      expect(rebuilt.PK$ANNOTATION?.[0]).not.toHaveProperty('_original');
+    },
+  );
+
+  it('sorts a preserved multi-row table while keeping each _original with its own row', async () => {
+    // Rows print in mz order (buildRecord sorts every table), so a fixture
+    // deliberately out of source order proves _original travels WITH its
+    // row through that sort rather than being reprinted in source order or
+    // reassigned to the wrong row.
+    const parsed = parseRecord(`ACCESSION: MSBNK-test-TST00001
+PK$ANNOTATION: m/z annotation
+  200 second
+  100.25 first
+//
+`);
+
+    const record = await buildRecord(parsed);
+
+    expect(record.PK$ANNOTATION?.map((a) => a.mz)).toStrictEqual([100.25, 200]);
+    expect(record.PK$ANNOTATION?.map((a) => a._original)).toStrictEqual([
+      '100.25 first',
+      '200 second',
+    ]);
+  });
+});
+
+describe('buildRecord treats an annotation table with no _original anywhere as nothing to preserve', () => {
+  // A hand-built PK$ANNOTATION array (an editor UI replacing the array
+  // outright, say) has no row with an `_original` at all.
+  // wasAnnotationRowEdited reports `edited: false` for every such row —
+  // there is nothing to compare a fresh row against — so the OLD
+  // `!annotations.some(edited)` predicate treated this as "unanimously
+  // unedited" and wrongly kept whatever `_PK$ANNOTATION_HEADER` the draft
+  // happened to carry over from an unrelated prior record.
+
+  it('drops a stale _PK$ANNOTATION_HEADER when every row is hand-built (no row has _original)', async () => {
+    const stale = parseRecord(`ACCESSION: MSBNK-test-TST00001
+PK$ANNOTATION: m/z tentative_formula formula_count mass error(ppm)
+  59.0134 C2H3O2- 1 59.0133 2.9
+//
+`);
+
+    // A draft carrying the OLD record's 5-column header alongside a fresh,
+    // fully hand-built (no _original anywhere) row array — the shape an
+    // editor UI produces when it replaces PK$ANNOTATION but starts from a
+    // draft object that still has the old header attached.
+    const draft = {
+      ...stale,
+      PK$ANNOTATION: [{ mz: 100.25, annotation: 'fragment' }],
+    };
+
+    const record = await buildRecord(draft);
+
+    expect(record._PK$ANNOTATION_HEADER).toBeUndefined();
+    // The rebuilt row must be printed under the DEFAULT header, not the
+    // stale 5-column one — a 5-column header over this 2-token row would
+    // misassign every column downstream (formula_count/mass/error(ppm) all
+    // shift by one silently) with no BuildError to catch it.
+    expect(serializeRecord(record)).toContain(
+      'PK$ANNOTATION: m/z annotation exact_mass error(ppm)',
+    );
+  });
+});
+
+describe('buildRecord guards PK$ANNOTATION _original against line injection', () => {
+  // _original is written verbatim into the output whenever a table
+  // round-trips unedited (preserveOriginals) — a newline in it would print
+  // as extra physical lines the reparser reads back as forged annotation
+  // rows or forged header fields; a value that otherwise defeats a safe
+  // reparse (a single line the parser reads as a real header field with an
+  // invalid value) must not crash buildRecord either. RecordDraft's Omit
+  // only blocks object-literal excess-property checking, not a variable of
+  // the wider `AnnotationWithOriginal` type — exactly how a caller
+  // legitimately carries a parsed row through, and exactly how these tests
+  // construct the attack.
+
+  it('rejects an _original containing a newline, rather than printing forged rows', async () => {
+    const poisoned: AnnotationWithOriginal = {
+      mz: 100.25,
+      annotation: 'frag',
+      _original: '100.25 frag\n  999.99 FORGED 1 999.98 0.1',
+    };
+
+    await expect(
+      buildRecord({ ...minimal(), PK$ANNOTATION: [poisoned] }),
+    ).rejects.toThrow(BuildException);
+    await expect(
+      buildRecord({ ...minimal(), PK$ANNOTATION: [poisoned] }),
+    ).rejects.toThrow(/newline or carriage return/);
+  });
+
+  it('rejects an _original containing a carriage return', async () => {
+    const poisoned: AnnotationWithOriginal = {
+      mz: 100.25,
+      annotation: 'frag',
+      _original: '100.25 frag\r  999.99 FORGED 1 999.98 0.1',
+    };
+
+    await expect(
+      buildRecord({ ...minimal(), PK$ANNOTATION: [poisoned] }),
+    ).rejects.toThrow(BuildException);
+  });
+
+  it('does not let a poisoned _original abort validation before other errors are collected', async () => {
+    // Before this guard, reparsing this _original threw a raw ParseException
+    // out of buildRecord, which aborted the whole function before the
+    // already-collected ACCESSION_EMPTY error ever reached a BuildException.
+    const poisoned: AnnotationWithOriginal = {
+      mz: 100.25,
+      annotation: 'frag',
+      _original: '100.25 frag\n  PK$NUM_PEAK: notanumber',
+    };
+
+    let caught: unknown;
+    try {
+      await buildRecord({
+        ACCESSION: '',
+        PK$ANNOTATION: [poisoned],
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BuildException);
+
+    const codes = (caught as BuildException).buildErrors.map((e) => e.code);
+
+    expect(codes).toContain('ACCESSION_EMPTY');
+  });
+
+  it('reports a BuildError, rather than letting a raw parse exception escape, when a single-line _original reparses as a real field with an invalid value', async () => {
+    // No newline at all: table-parsers.ts's startsNewField ends the mini
+    // annotation table early on a line that looks like "KEY: value" for a
+    // real header key, and PeakFieldParser throws on a non-numeric
+    // PK$NUM_PEAK — a raw ParseException that must not escape buildRecord.
+    const poisoned: AnnotationWithOriginal = {
+      mz: 100.25,
+      annotation: 'frag',
+      _original: 'PK$NUM_PEAK: notanumber',
+    };
+
+    let caught: unknown;
+    try {
+      await buildRecord({ ...minimal(), PK$ANNOTATION: [poisoned] });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BuildException);
+
+    const codes = (caught as BuildException).buildErrors.map((e) => e.code);
+
+    expect(codes).toContain('ANNOTATION_ORIGINAL_UNREADABLE');
+  });
+});
+
+describe('buildRecord guards a preserved _PK$ANNOTATION_HEADER against line injection', () => {
+  // _PK$ANNOTATION_HEADER is written verbatim (record-serializer.ts:130)
+  // ONLY when the table's rows are being preserved — the one field the
+  // NOT_WRITTEN_VERBATIM classification used to (wrongly) exempt from this
+  // guard on the theory that buildRecord always strips it, which stopped
+  // being true once annotation-table preservation shipped.
+
+  it('rejects a preserved _PK$ANNOTATION_HEADER containing a newline', async () => {
+    const parsed = parseRecord(`ACCESSION: MSBNK-test-TST00001
+PK$ANNOTATION: m/z annotation
+  100.25 fragment
+//
+`);
+    // Smuggled through a variable of the wider MassBankRecord type, exactly
+    // as RecordDraft's own module comment describes — draft[field] can't
+    // reach this key through RecordDraft's type at all (see
+    // readAnnotationHeader), so this is the only way a caller can even
+    // present this value to buildRecord.
+    const poisoned: MassBankRecord = {
+      ...parsed,
+      _PK$ANNOTATION_HEADER: 'm/z annotation\nLICENSE: forged',
+    };
+
+    await expect(buildRecord(poisoned)).rejects.toThrow(BuildException);
+    await expect(buildRecord(poisoned)).rejects.toThrow(
+      /_PK\$ANNOTATION_HEADER/,
+    );
+  });
+
+  it('does not reject a header when the table is not being preserved (edited rows drop it anyway)', async () => {
+    // A poisoned header attached to a table that is about to be rebuilt
+    // (not preserved) is never written, so it must not be validated either
+    // — validating it here would reject drafts that could never actually
+    // produce the injection.
+    const parsed = parseRecord(`ACCESSION: MSBNK-test-TST00001
+PK$ANNOTATION: m/z annotation
+  100.25 fragment
+//
+`);
+    const edited = (parsed.PK$ANNOTATION ?? []).map((a) => ({
+      ...a,
+      mz: a.mz + 0.001,
+    }));
+    const draft: MassBankRecord = {
+      ...parsed,
+      PK$ANNOTATION: edited,
+      _PK$ANNOTATION_HEADER: 'm/z annotation\nLICENSE: forged',
+    };
+
+    const record = await buildRecord(draft);
+
+    expect(record._PK$ANNOTATION_HEADER).toBeUndefined();
+  });
+});
+
 describe('buildRecord rejects an unsafe relativeIntensity', () => {
   // relativeIntensity never reaches calculateSplash (SplashPeak is
   // {mz, intensity} only), so it is the one numeric peak field that would
@@ -617,13 +911,33 @@ describe('buildRecord rejects a value that cannot round-trip in any field the se
     ).rejects.toThrow(/LICENSE/);
   });
 
-  it.each(VERBATIM_STRING_FIELDS)('throws when %s is empty', async (field) => {
-    // record-serializer.ts guards every single-value field with
-    // `if (record.FIELD)`, and `''` is falsy — the field would vanish
-    // entirely on reparse instead of round-tripping.
-    await expect(buildRecord({ ...minimal(), [field]: '' })).rejects.toThrow(
-      BuildException,
+  it.each(VERBATIM_STRING_FIELDS)(
+    'drops %s when it is empty',
+    async (field) => {
+      // record-serializer.ts guards every single-value field with
+      // `if (record.FIELD)`, and `''` is falsy — the field would vanish
+      // entirely on reparse regardless of what buildRecord does with it, so
+      // buildRecord canonicalises it to absent instead of rejecting a draft
+      // the parser itself produces without complaint (e.g. `RECORD_TITLE: `).
+      const record = await buildRecord({ ...minimal(), [field]: '' });
+
+      expect(record[field]).toBeUndefined();
+    },
+  );
+
+  it('accepts and drops an empty RECORD_TITLE round-tripped from a real parse', async () => {
+    // Regression lock: rejecting this would make buildRecord strictly less
+    // capable than parseRecord, which accepts `RECORD_TITLE: ` (empty value)
+    // without complaint.
+    const parsed = parseRecord(
+      'ACCESSION: MSBNK-test-TST00001\nRECORD_TITLE: \n//\n',
     );
+
+    expect(parsed.RECORD_TITLE).toBe('');
+
+    const record = await buildRecord(parsed);
+
+    expect(record.RECORD_TITLE).toBeUndefined();
   });
 
   it('does not reject an empty element of an array-valued field', async () => {
