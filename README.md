@@ -42,7 +42,8 @@ import { validateContent } from 'massbank';
 // Validate record text without file I/O
 const recordText = `ACCESSION: MSBNK-test-TST00001
 RECORD_TITLE: Test Record
-//`;
+//
+`;
 
 const result = await validateContent(recordText, 'MSBNK-test-TST00001.txt');
 ```
@@ -228,7 +229,7 @@ try {
 
 Two limits are worth knowing:
 
-1. **The filename is derived from `ACCESSION`** (as `` `${record.ACCESSION}.txt` ``), because a `MassBankRecord` carries no filename of its own. `AccessionMatchRule` therefore **cannot fail** on this path for an `ACCESSION` with no path separator — a green result is not evidence the accession matches any external filename. An `ACCESSION` containing a path separator (e.g. `foo/bar` or `foo\bar`) still trips the rule against a basename it never saw — a confusing error, not a false pass. Use `validate()` or `validateContent()` with the real filename to check that.
+1. **The filename is derived from the raw `ACCESSION` value** (as `` `${record.ACCESSION}.txt` ``), because a `MassBankRecord` carries no filename of its own — but `AccessionMatchRule` compares that filename against the record's `ACCESSION` field AFTER a serialize→parse round trip, and `parseRecord` trims. So this can fail on either of two unrelated things, neither needing the other: leading/trailing whitespace in `ACCESSION` (measured: `validateRecord({ ACCESSION: ' MSBNK-test-TST00001' })` reports "ACCESSION mismatch" with no path separator anywhere), or a path separator in `ACCESSION` (e.g. `foo/bar` or `foo\bar`, which trips the rule against a basename it never saw). This path never has a real external file to check against, so neither a pass nor a fail here says anything about whether a real file's name would match — a green result is **not** evidence that it would. Use `validate()` or `validateContent()` with the real filename to check that.
 2. **Mandatory fields and controlled vocabularies are not checked**, same as `validate`/`validateContent` today (see [MassBank Format 2.6.0 Compliance](#massbank-format-260-compliance)). A record containing only `ACCESSION` returns `success: true`. A green result means "round-trips and passes the current rule set," not "submittable to MassBank."
 
 ### Additional exports
