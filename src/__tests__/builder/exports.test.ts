@@ -53,8 +53,8 @@ describe('the exported builder functions are the real implementations', () => {
     expect(record.PK$NUM_PEAK).toBe(1);
     expect(record.PK$SPLASH).toMatch(/^splash10-/);
     // A wrapper that drops PK$ANNOTATION (e.g. forwarding only some of its
-    // arguments) would still pass the two assertions above — the root-import
-    // draft used to carry no annotations, so nothing exercised this path.
+    // arguments) would still pass the two assertions above without this one —
+    // the draft must carry annotations for this path to be exercised at all.
     expect(record.PK$ANNOTATION).toStrictEqual([
       { mz: 100.25, annotation: 'fragment' },
     ]);
@@ -106,8 +106,8 @@ describe('the exported builder functions are the real implementations', () => {
 
     expect(codes).toStrictEqual([
       'ACCESSION_EMPTY',
-      'PEAK_INVALID_RELATIVE_INTENSITY',
-      'PEAK_NEGATIVE_MZ',
+      'PEAK_RELATIVE_INTENSITY_NEGATIVE',
+      'PEAK_MZ_NEGATIVE',
     ]);
   });
 });

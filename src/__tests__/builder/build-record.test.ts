@@ -51,6 +51,22 @@ PK$ANNOTATION: m/z tentative_formula formula_count exact_mass error(ppm)
 `);
 
 /**
+ * The first element of a non-empty array, or throw. A plain `array[0]!` would
+ * silence `noUncheckedIndexedAccess` rather than prove the array is
+ * non-empty; a helper (rather than a conditional inline in a test body) is
+ * also what `vitest/no-conditional-in-test` requires.
+ * @param array - the array to read from
+ * @returns the first element
+ */
+function firstOf<T>(array: readonly T[]): T {
+  const [first] = array;
+  if (first === undefined) {
+    throw new Error('expected at least one element');
+  }
+  return first;
+}
+
+/**
  * Drop `_original` from each row so a reparsed table can be compared against
  * a caller-built one. A text-only round-trip check (`serializeRecord(parseRecord(x))
  * === x`) is a fixed point of ANY consistent relabelling of the positional
@@ -177,7 +193,7 @@ function wouldRoundTripIfRebuilt(row: Annotation): boolean {
 
 /**
  * Whether every numeric field the parser mapped from a row is finite —
- * independent of buildRecord's own `assertFiniteAnnotationValues`, so
+ * independent of buildRecord's own `checkAnnotationFiniteValues`, so
  * classifying against it is a real check, not a reflection of the code
  * under test. For a row sourced from real parsing, this is the only way it
  * can be unrepresentable: `annotation` is always a single safe token when it
@@ -424,7 +440,9 @@ PK$ANNOTATION: m/z tentative_formula formula_count exact_mass error(ppm)
     // and re-checked, not silently preserved because only the OTHER row
     // changed.
     await expect(buildRecord(draft)).rejects.toThrow(BuildException);
-    await expect(buildRecord(draft)).rejects.toThrow(/row 1 .*5 columns/);
+    await expect(buildRecord(draft)).rejects.toThrow(
+      /row 1 \(mz 100\.25\).*5 columns/,
+    );
   });
 
   it.each([
@@ -629,10 +647,10 @@ describe('buildRecord guards PK$ANNOTATION _original against line injection', ()
 
 describe('buildRecord guards a preserved _PK$ANNOTATION_HEADER against line injection', () => {
   // _PK$ANNOTATION_HEADER is written verbatim (record-serializer.ts:130)
-  // ONLY when the table's rows are being preserved — the one field the
-  // NOT_WRITTEN_VERBATIM classification used to (wrongly) exempt from this
-  // guard on the theory that buildRecord always strips it, which stopped
-  // being true once annotation-table preservation shipped.
+  // ONLY when the table's rows are being preserved — RecordDraft's Omit
+  // drops this key from the type entirely (see the module comment on
+  // RecordDraft), so it can't join the generic VERBATIM_STRING_FIELDS sweep
+  // and needs this dedicated guard instead.
 
   it('rejects a preserved _PK$ANNOTATION_HEADER containing a newline', async () => {
     const parsed = parseRecord(`ACCESSION: MSBNK-test-TST00001
@@ -998,8 +1016,7 @@ describe('buildRecord rejects a value that cannot round-trip in any field the se
   it('throws when AUTHORS contains a trailing carriage return', async () => {
     // Measured against parse-record.ts: a value's trailing \r sits right up
     // against the join's own '\n', and .trim() strips \r from either end
-    // regardless — "AB\r" reparses as "AB", silently, with no validation
-    // error from this guard's predecessor. The corrected guard rejects it
+    // regardless — "AB\r" would reparse as "AB" if allowed through. Rejected
     // like any other untrimmable value.
     await expect(
       buildRecord({ ...minimal(), AUTHORS: 'AB\r' }),
@@ -1023,7 +1040,7 @@ describe('buildRecord rejects a value that cannot round-trip in any field the se
 describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () => {
   // PK$ANNOTATION is read back by TOKEN COUNT (table-parsers.ts), not by
   // forming a prefix of [annotation, exactMass, errorPpm] — see
-  // assertExpressibleAnnotation's docstring for the full legal/illegal table.
+  // checkAnnotationShape's docstring for the full legal/illegal table.
   // buildRecord must refuse a row it cannot serialize and reparse as itself,
   // rather than silently produce a record that round-trips to the wrong data.
 
@@ -1374,7 +1391,7 @@ describe('buildRecord guards against parser-truncated PK$ANNOTATION columns', ()
     ).rejects.toThrow(BuildException);
     await expect(
       buildRecord({ ...parsed, PK$ANNOTATION: edited }),
-    ).rejects.toThrow(/row 0 .*5 columns/);
+    ).rejects.toThrow(/row 0 \(mz 59\.014399999999995\).*5 columns/);
   });
 
   it('does not reject a parsed row a caller legitimately trimmed to 4 tokens', async () => {
@@ -1448,7 +1465,9 @@ PK$ANNOTATION: m/z num type
     const draft = { ...parsed, PK$ANNOTATION: edited };
 
     await expect(buildRecord(draft)).rejects.toThrow(BuildException);
-    await expect(buildRecord(draft)).rejects.toThrow(/row 0 .*3 columns/);
+    await expect(buildRecord(draft)).rejects.toThrow(
+      /row 0 \(mz 494\.351\).*3 columns/,
+    );
   });
 
   it('does not reject a parsed 3-column row whose third column is numeric', async () => {
@@ -1466,6 +1485,387 @@ PK$ANNOTATION: m/z annotation exact_mass
       exactMass: 100.24,
       _original: '100.25 fragment 100.24',
     });
+  });
+});
+
+describe("buildRecord's BuildError payload is structured, not a message to parse", () => {
+  // The structured payload (code, fieldName, rowIndex, property, plus the
+  // pre-formatted field display string) is the entire justification for
+  // BuildException over a plain aggregated Error — a test that only asserts
+  // `.rejects.toThrow(BuildException)` proves nothing about it: swap two
+  // BuildErrorCode values, or blank every field, and a class-only assertion
+  // stays green regardless. These assert on the payload directly, including
+  // a nested annotation-row property (`PK$ANNOTATION[2].exactMass`) and an
+  // array-element index (`CH$NAME[1]`), so a code swap or a blanked field
+  // turns one of them red.
+
+  it('reports one BuildError per failure, each with its own code and structured location', async () => {
+    const draft = {
+      ACCESSION: '',
+      DATE: '  2026.07.29  ',
+      LICENSE: 'CC BY\nCOPYRIGHT: forged',
+      CH$NAME: ['ok', '  padded  '],
+      PK$PEAK: [
+        // Both not-finite AND negative: -Infinity satisfies !Number.isFinite
+        // and < 0 at once, so this row alone proves the two relativeIntensity
+        // codes are independent, not mutually exclusive.
+        {
+          mz: 100.25,
+          intensity: 100,
+          relativeIntensity: Number.NEGATIVE_INFINITY,
+        },
+        { mz: -50, intensity: 100, relativeIntensity: 999 },
+      ],
+      PK$ANNOTATION: [
+        { mz: 100.25, annotation: 'loss of H2O' },
+        { mz: Number.NaN, annotation: 'fragment' },
+        // Two ANNOTATION_NOT_FINITE errors on the SAME row, distinguished
+        // only by `property` — proves `property`, not `code`, is what a
+        // caller must read to tell exactMass and errorPpm apart here.
+        {
+          mz: 600,
+          annotation: 'frag',
+          exactMass: Number.NaN,
+          errorPpm: Number.POSITIVE_INFINITY,
+        },
+        { mz: 200, exactMass: 194.08 },
+        { mz: 300, errorPpm: 1.2 },
+        { mz: 400, annotation: 'frag', errorPpm: 1.2 },
+        { mz: 500, annotation: '194.08', exactMass: 1.2 },
+      ],
+    };
+
+    let caught: unknown;
+    try {
+      await buildRecord(draft);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BuildException);
+
+    const { buildErrors } = caught as BuildException;
+
+    expect(
+      buildErrors.map(({ code, fieldName, rowIndex, property, field }) => ({
+        code,
+        fieldName,
+        rowIndex,
+        property,
+        field,
+      })),
+    ).toStrictEqual([
+      {
+        code: 'ACCESSION_EMPTY',
+        fieldName: 'ACCESSION',
+        rowIndex: undefined,
+        property: undefined,
+        field: 'ACCESSION',
+      },
+      {
+        code: 'VERBATIM_WHITESPACE',
+        fieldName: 'DATE',
+        rowIndex: undefined,
+        property: undefined,
+        field: 'DATE',
+      },
+      {
+        code: 'VERBATIM_LINE_INJECTION',
+        fieldName: 'LICENSE',
+        rowIndex: undefined,
+        property: undefined,
+        field: 'LICENSE',
+      },
+      {
+        code: 'VERBATIM_WHITESPACE',
+        fieldName: 'CH$NAME',
+        rowIndex: 1,
+        property: undefined,
+        field: 'CH$NAME[1]',
+      },
+      {
+        code: 'PEAK_RELATIVE_INTENSITY_NOT_FINITE',
+        fieldName: 'PK$PEAK',
+        rowIndex: 0,
+        property: 'relativeIntensity',
+        field: 'PK$PEAK[0].relativeIntensity',
+      },
+      {
+        code: 'PEAK_RELATIVE_INTENSITY_NEGATIVE',
+        fieldName: 'PK$PEAK',
+        rowIndex: 0,
+        property: 'relativeIntensity',
+        field: 'PK$PEAK[0].relativeIntensity',
+      },
+      {
+        code: 'PEAK_MZ_NEGATIVE',
+        fieldName: 'PK$PEAK',
+        rowIndex: 1,
+        property: 'mz',
+        field: 'PK$PEAK[1].mz',
+      },
+      {
+        code: 'ANNOTATION_TEXT_NOT_ROUND_TRIPPABLE',
+        fieldName: 'PK$ANNOTATION',
+        rowIndex: 0,
+        property: 'annotation',
+        field: 'PK$ANNOTATION[0].annotation',
+      },
+      {
+        code: 'ANNOTATION_NOT_FINITE',
+        fieldName: 'PK$ANNOTATION',
+        rowIndex: 1,
+        property: 'mz',
+        field: 'PK$ANNOTATION[1].mz',
+      },
+      {
+        code: 'ANNOTATION_NOT_FINITE',
+        fieldName: 'PK$ANNOTATION',
+        rowIndex: 2,
+        property: 'exactMass',
+        field: 'PK$ANNOTATION[2].exactMass',
+      },
+      {
+        code: 'ANNOTATION_NOT_FINITE',
+        fieldName: 'PK$ANNOTATION',
+        rowIndex: 2,
+        property: 'errorPpm',
+        field: 'PK$ANNOTATION[2].errorPpm',
+      },
+      {
+        code: 'ANNOTATION_EXACT_MASS_WITHOUT_ANNOTATION',
+        fieldName: 'PK$ANNOTATION',
+        rowIndex: 3,
+        property: undefined,
+        field: 'PK$ANNOTATION[3]',
+      },
+      {
+        code: 'ANNOTATION_ERROR_PPM_WITHOUT_ANNOTATION',
+        fieldName: 'PK$ANNOTATION',
+        rowIndex: 4,
+        property: undefined,
+        field: 'PK$ANNOTATION[4]',
+      },
+      {
+        code: 'ANNOTATION_ERROR_PPM_WITHOUT_EXACT_MASS',
+        fieldName: 'PK$ANNOTATION',
+        rowIndex: 5,
+        property: undefined,
+        field: 'PK$ANNOTATION[5]',
+      },
+      {
+        code: 'ANNOTATION_TEXT_LOOKS_NUMERIC',
+        fieldName: 'PK$ANNOTATION',
+        rowIndex: 6,
+        property: undefined,
+        field: 'PK$ANNOTATION[6]',
+      },
+    ]);
+
+    // 15 failures is over formatMessage's summary threshold: the aggregate
+    // Error.message must summarise rather than concatenate all 15 in full.
+    expect(caught).toHaveProperty(
+      'message',
+      expect.stringMatching(
+        /^15 problems building the record: .*and \d+ more \(see error\.buildErrors\)\.$/,
+      ),
+    );
+  });
+
+  it('does not summarise the aggregate message at or under the threshold', async () => {
+    // Regression lock for formatMessage's SUMMARY_THRESHOLD boundary: three
+    // failures must still print in full, one per line, not as a summary.
+    let caught: unknown;
+    try {
+      await buildRecord({
+        ACCESSION: '',
+        PK$PEAK: [{ mz: -1, intensity: 10, relativeIntensity: -5 }],
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BuildException);
+
+    const buildException = caught as BuildException;
+
+    expect(buildException.buildErrors).toHaveLength(3);
+    expect(buildException.message).not.toContain(
+      'more (see error.buildErrors)',
+    );
+    expect(buildException.message.split('\n')).toHaveLength(3);
+  });
+
+  it('does not double the field name in the aggregate message when a BuildError message already names it', async () => {
+    // checkAccession/checkVerbatimText's messages already start with their
+    // own field ("ACCESSION must not...", "LICENSE must not..."). formatMessage
+    // must not also prefix "ACCESSION: " in front of that.
+    let caught: unknown;
+    try {
+      await buildRecord({ ACCESSION: '  padded  ' });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BuildException);
+    expect((caught as BuildException).message).not.toMatch(
+      /^ACCESSION: ACCESSION/,
+    );
+    expect((caught as BuildException).message).toMatch(/^ACCESSION must not/);
+  });
+
+  it('reports ACCESSION_LINE_INJECTION and ACCESSION_WHITESPACE with no rowIndex or property', async () => {
+    let caught: unknown;
+    try {
+      await buildRecord({ ACCESSION: 'MSBNK-x-1\nAUTHORS: Attacker A' });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BuildException);
+
+    const { buildErrors } = caught as BuildException;
+
+    expect(buildErrors).toHaveLength(1);
+    expect(buildErrors[0]).toMatchObject({
+      code: 'ACCESSION_LINE_INJECTION',
+      fieldName: 'ACCESSION',
+      field: 'ACCESSION',
+    });
+    expect(buildErrors[0]).not.toHaveProperty('rowIndex');
+    expect(buildErrors[0]).not.toHaveProperty('property');
+
+    let caughtWhitespace: unknown;
+    try {
+      await buildRecord({ ACCESSION: '  MSBNK-test-TST00001' });
+    } catch (error) {
+      caughtWhitespace = error;
+    }
+
+    expect(caughtWhitespace).toBeInstanceOf(BuildException);
+
+    const { buildErrors: whitespaceErrors } =
+      caughtWhitespace as BuildException;
+
+    expect(whitespaceErrors).toHaveLength(1);
+    expect(whitespaceErrors[0]).toMatchObject({
+      code: 'ACCESSION_WHITESPACE',
+      fieldName: 'ACCESSION',
+      field: 'ACCESSION',
+    });
+  });
+
+  it('reports ANNOTATION_DISCARDED_COLUMN with a rowIndex but no property — the failure spans the whole row', async () => {
+    const parsed = fiveColumnRecord();
+    const edited = (parsed.PK$ANNOTATION ?? []).map((a) => ({
+      ...a,
+      mz: a.mz + 0.001,
+    }));
+
+    let caught: unknown;
+    try {
+      await buildRecord({ ...parsed, PK$ANNOTATION: edited });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BuildException);
+
+    const { buildErrors } = caught as BuildException;
+
+    expect(buildErrors).toHaveLength(1);
+    expect(buildErrors[0]).toMatchObject({
+      code: 'ANNOTATION_DISCARDED_COLUMN',
+      fieldName: 'PK$ANNOTATION',
+      rowIndex: 0,
+      field: 'PK$ANNOTATION[0]',
+    });
+    // The failure spans the whole row's shape, not one property of it.
+    expect(buildErrors[0]).not.toHaveProperty('property');
+  });
+
+  it('reports ANNOTATION_ORIGINAL_LINE_INJECTION and ANNOTATION_ORIGINAL_UNREADABLE with property "_original"', async () => {
+    const injected: AnnotationWithOriginal = {
+      mz: 100.25,
+      annotation: 'frag',
+      _original: '100.25 frag\n  999.99 FORGED 1 999.98 0.1',
+    };
+    let caught: unknown;
+    try {
+      await buildRecord({ ...minimal(), PK$ANNOTATION: [injected] });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BuildException);
+
+    const { buildErrors } = caught as BuildException;
+
+    // The poisoned _original also makes wasAnnotationRowEdited report this
+    // row as edited (see reparseAnnotationOriginal), which turns off
+    // preserveOriginals for the table and so ALSO runs
+    // checkAnnotationDiscardedColumns against the same 7-token row — a real
+    // second, independent failure, not a test artifact.
+    expect(buildErrors).toHaveLength(2);
+
+    const lineInjection = buildErrors.find(
+      (error) => error.code === 'ANNOTATION_ORIGINAL_LINE_INJECTION',
+    );
+
+    expect(lineInjection).toMatchObject({
+      fieldName: 'PK$ANNOTATION',
+      rowIndex: 0,
+      property: '_original',
+      field: 'PK$ANNOTATION[0]._original',
+    });
+
+    const unreadable: AnnotationWithOriginal = {
+      mz: 100.25,
+      annotation: 'frag',
+      _original: 'PK$NUM_PEAK: notanumber',
+    };
+    let caughtUnreadable: unknown;
+    try {
+      await buildRecord({ ...minimal(), PK$ANNOTATION: [unreadable] });
+    } catch (error) {
+      caughtUnreadable = error;
+    }
+
+    expect(caughtUnreadable).toBeInstanceOf(BuildException);
+
+    const { buildErrors: unreadableErrors } =
+      caughtUnreadable as BuildException;
+
+    expect(unreadableErrors).toHaveLength(1);
+    expect(unreadableErrors[0]).toMatchObject({
+      code: 'ANNOTATION_ORIGINAL_UNREADABLE',
+      fieldName: 'PK$ANNOTATION',
+      rowIndex: 0,
+      property: '_original',
+      field: 'PK$ANNOTATION[0]._original',
+    });
+  });
+
+  it('keeps buildErrors readonly at the type level', async () => {
+    let caught: unknown;
+    try {
+      await buildRecord({ ACCESSION: '' });
+    } catch (error) {
+      caught = error;
+    }
+    const buildException = caught as BuildException;
+    const firstError = firstOf(buildException.buildErrors);
+
+    // @ts-expect-error buildErrors is `readonly BuildError[]` — push must not
+    // type-check. If this stops erroring (e.g. the field is ever widened back
+    // to a plain array), `check-types` fails on the unused `@ts-expect-error`
+    // directive itself, so this is a real, enforced regression lock, not a
+    // runtime-only assertion (readonly is erased at runtime — JS still lets
+    // this call through once the type system is bypassed, which is exactly
+    // why the compile-time check above is the one that matters).
+    buildException.buildErrors.push(firstError);
+
+    expect(buildException.buildErrors.length).toBeGreaterThan(0);
   });
 });
 
@@ -1664,7 +2064,8 @@ describe('buildRecord against the sample fixtures', () => {
     'MSBNK-test-TST00002.txt',
     'MSBNK-test-TST00003.txt',
     // TST00004 carries a real 5-column PK$ANNOTATION table (trimmed from a
-    // MassBank.eu record) — the shape buildRecord used to reject outright.
+    // MassBank.eu record) — see the "parser-truncated columns" describe
+    // block above for why an unedited row like this builds successfully.
     'MSBNK-test-TST00004.txt',
   ];
 
