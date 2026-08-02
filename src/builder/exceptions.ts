@@ -19,12 +19,29 @@
  *   `ANNOTATION_TEXT_LOOKS_NUMERIC`) each need a different fix from the
  *   caller — add a field, clear one, or rename an annotation — so they are
  *   split one code per failure rather than sharing `field`-based prose.
- * - `PEAK_MZ_NEGATIVE` and the two `PEAK_RELATIVE_INTENSITY_*` codes name
- *   their field in the code itself, unlike `ANNOTATION_NOT_FINITE`: `PK$PEAK`
- *   has few enough numeric guards, each with its own bespoke rationale (see
- *   `checkPeakMz`/`checkPeakRelativeIntensity`), that folding them into one
- *   shared cause code would force a caller to read `property` just to know
- *   which check fired at all.
+ * - `PEAK_MZ_NEGATIVE`, `PEAK_MZ_NOT_FINITE`, `PEAK_INTENSITY_NOT_FINITE`,
+ *   `PEAK_INTENSITY_NEGATIVE`, and the two `PEAK_RELATIVE_INTENSITY_*` codes
+ *   name their field in the code itself, unlike `ANNOTATION_NOT_FINITE`:
+ *   `PK$PEAK` has few enough numeric guards, each with its own bespoke
+ *   rationale (see `checkPeakMz`/`checkPeakIntensity`/
+ *   `checkPeakRelativeIntensity`), that folding them into one shared cause
+ *   code would force a caller to read `property` just to know which check
+ *   fired at all. `PEAK_MZ_NOT_FINITE`, `PEAK_INTENSITY_NOT_FINITE`, and
+ *   `PEAK_INTENSITY_NEGATIVE` mirror exactly what `calculateSplash` itself
+ *   refuses to hash — see `checkPeakIntensity`'s docstring for why that
+ *   duplication is deliberate and how the two are kept from drifting apart.
+ * - `PEAK_ALL_ZERO_INTENSITY` is the one `PK$PEAK` code with no `rowIndex` or
+ *   `property`: an all-zero spectrum is a fact about the WHOLE table (every
+ *   peak's `intensity` is `0`), not about any single peak.
+ * - `ANNOTATION_ORIGINAL_LINE_INJECTION` and `ANNOTATION_ORIGINAL_UNREADABLE`
+ *   keep the `ORIGINAL` qualifier that `ANNOTATION_NOT_FINITE`-style codes
+ *   drop, even though both always carry `property: '_original'` and so never
+ *   actually need it to disambiguate a field: a smuggled `_original` string
+ *   failing to reparse safely is a fundamentally different KIND of problem
+ *   (raw source text unsafe to print verbatim) than an ordinary
+ *   annotation-shape or finiteness failure, and a caller scanning the union
+ *   without cross-referencing `property` should be able to tell the two
+ *   apart by code alone.
  */
 export type BuildErrorCode =
   | 'ACCESSION_LINE_INJECTION'
@@ -33,6 +50,10 @@ export type BuildErrorCode =
   | 'VERBATIM_LINE_INJECTION'
   | 'VERBATIM_WHITESPACE'
   | 'PEAK_MZ_NEGATIVE'
+  | 'PEAK_MZ_NOT_FINITE'
+  | 'PEAK_INTENSITY_NOT_FINITE'
+  | 'PEAK_INTENSITY_NEGATIVE'
+  | 'PEAK_ALL_ZERO_INTENSITY'
   | 'PEAK_RELATIVE_INTENSITY_NOT_FINITE'
   | 'PEAK_RELATIVE_INTENSITY_NEGATIVE'
   | 'ANNOTATION_DISCARDED_COLUMN'

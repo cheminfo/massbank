@@ -622,46 +622,125 @@ function checkPeakRelativeIntensity(peak: Peak, index: number): BuildError[] {
 }
 
 /**
- * `calculate-splash.ts` rejects a non-finite `mz` but not a negative one —
- * `calculateHistogram`'s bin index is `Math.trunc(mz / binSize) % HISTOGRAM_BINS`,
- * and `Math.trunc` rounds a small negative quotient towards zero rather than
- * away from it, so e.g. `mz = -50` yields `Math.trunc(-0.5) === -0`, which
- * aliases bin 0 exactly like a real peak at `mz = 0..4` would. The resulting
- * SPLASH is computed and looks ordinary; it just silently misrepresents which
- * bin the peak actually falls in, so a negative `mz` cannot be left for
- * `calculateSplash` to catch — it must be rejected here, before any peak
- * reaches it.
+ * `calculate-splash.ts` itself rejects a non-finite `mz` (see
+ * `checkPeakIntensity`'s docstring for that half of the fold), but NOT a
+ * negative one — `calculateHistogram`'s bin index is
+ * `Math.trunc(mz / binSize) % HISTOGRAM_BINS`, and `Math.trunc` rounds a
+ * small negative quotient towards zero rather than away from it, so e.g.
+ * `mz = -50` yields `Math.trunc(-0.5) === -0`, which aliases bin 0 exactly
+ * like a real peak at `mz = 0..4` would. The resulting SPLASH is computed and
+ * looks ordinary; it just silently misrepresents which bin the peak actually
+ * falls in. This is the one peak-hashability condition that is NOT simply
+ * reused from `calculateSplash` (contrast `checkPeakIntensity`): `mz < 0`
+ * must be rejected here regardless of what `calculateSplash` does with it,
+ * because what it does with it is wrong.
  * @param peak - the peak to check
  * @param index - the peak's position in the draft, for error reporting
- * @returns a `BuildError` when `mz` is negative
+ * @returns every `BuildError` `mz` fails — up to two, since not-finite and
+ * negative are independent facts about the same value
  */
-function checkPeakMz(peak: Peak, index: number): BuildError | undefined {
-  if (peak.mz < 0) {
-    return {
-      code: 'PEAK_MZ_NEGATIVE',
-      ...describeField('PK$PEAK', index, 'mz'),
-      message: `PK$PEAK row ${index} (mz ${peak.mz}): mz is negative. A negative m/z is not a real peak position, and calculateSplash's histogram bins by "Math.trunc(mz / binSize) % HISTOGRAM_BINS", which aliases a negative mz onto the same bin as a small non-negative one instead of rejecting it.`,
-    };
+function checkPeakMz(peak: Peak, index: number): BuildError[] {
+  const errors: BuildError[] = [];
+  const location = describeField('PK$PEAK', index, 'mz');
+  if (!Number.isFinite(peak.mz)) {
+    errors.push({
+      code: 'PEAK_MZ_NOT_FINITE',
+      ...location,
+      message: `PK$PEAK row ${index} (mz ${peak.mz}): mz is not finite. calculateSplash refuses to hash a non-finite mz; this guard reports it as a BuildError instead of letting that RangeError escape.`,
+    });
   }
-  return undefined;
+  if (peak.mz < 0) {
+    errors.push({
+      code: 'PEAK_MZ_NEGATIVE',
+      ...location,
+      message: `PK$PEAK row ${index} (mz ${peak.mz}): mz is negative. A negative m/z is not a real peak position, and calculateSplash's histogram bins by "Math.trunc(mz / binSize) % HISTOGRAM_BINS", which aliases a negative mz onto the same bin as a small non-negative one instead of rejecting it.`,
+    });
+  }
+  return errors;
+}
+
+/**
+ * `intensity` — unlike `relativeIntensity` — feeds `calculateSplash`
+ * directly (`SplashPeak` is `{mz, intensity}`), which already refuses to
+ * hash a non-finite or negative one, throwing a plain `RangeError`. Before
+ * this guard existed, that `RangeError` reached a `buildRecord` caller
+ * separately from every other failure, alongside `BuildException` from one
+ * entry point — two exception types for what is, from a caller's seat, the
+ * same kind of problem: bad peak data.
+ *
+ * Reusing `calculateSplash`'s own decision (rather than reimplementing an
+ * independent check that could drift out of sync with it) is deliberate:
+ * unlike `checkPeakMz`'s negative-`mz` case, `calculateSplash`'s finiteness
+ * and non-negativity checks on `intensity` are not wrong, so there is no
+ * reason to duplicate the reasoning, only the trigger condition. The
+ * `it.each` sweep in build-record.test.ts's "peak-hashability guards match
+ * calculateSplash" describe block runs both this guard and the real
+ * `calculateSplash` over the same generated peaks and asserts they agree on
+ * every case, so a future change to either side that breaks the
+ * correspondence fails a test instead of leaving `buildRecord` quietly
+ * wrong.
+ * @param peak - the peak to check
+ * @param index - the peak's position in the draft, for error reporting
+ * @returns every `BuildError` `intensity` fails — up to two, since
+ * not-finite and negative are independent facts about the same value
+ */
+function checkPeakIntensity(peak: Peak, index: number): BuildError[] {
+  const errors: BuildError[] = [];
+  const location = describeField('PK$PEAK', index, 'intensity');
+  if (!Number.isFinite(peak.intensity)) {
+    errors.push({
+      code: 'PEAK_INTENSITY_NOT_FINITE',
+      ...location,
+      message: `PK$PEAK row ${index} (mz ${peak.mz}): intensity ${peak.intensity} is not finite. calculateSplash refuses to hash a non-finite intensity; this guard reports it as a BuildError instead of letting that RangeError escape.`,
+    });
+  }
+  if (peak.intensity < 0) {
+    errors.push({
+      code: 'PEAK_INTENSITY_NEGATIVE',
+      ...location,
+      message: `PK$PEAK row ${index} (mz ${peak.mz}): intensity ${peak.intensity} is negative. calculateSplash refuses to hash a negative intensity; this guard reports it as a BuildError instead of letting that RangeError escape.`,
+    });
+  }
+  return errors;
+}
+
+/**
+ * The one peak-hashability condition `checkPeakIntensity`/`checkPeakMz`
+ * cannot see per-row: `calculateSplash` also refuses a peak list whose
+ * highest intensity is `0` (every peak reads as silence — there is no base
+ * peak to normalise against). By the time this runs, `checkPeakIntensity`
+ * has already ruled out a negative intensity, so "the highest is 0" and
+ * "every intensity is exactly 0" are the same fact.
+ * @param peaks - every peak in the draft
+ * @returns a `BuildError` when `peaks` is non-empty and every intensity is 0
+ */
+function checkPeakTableAllZeroIntensity(peaks: Peak[]): BuildError | undefined {
+  if (peaks.length === 0 || !peaks.every((peak) => peak.intensity === 0)) {
+    return undefined;
+  }
+  return {
+    code: 'PEAK_ALL_ZERO_INTENSITY',
+    ...describeField('PK$PEAK'),
+    message:
+      'PK$PEAK: every peak has intensity 0. calculateSplash refuses to hash an all-zero-intensity spectrum — there is no base peak to normalise against.',
+  };
 }
 
 /**
  * Run every PK$PEAK row guard and collect every failure, rather than
- * stopping at the first — `relativeIntensity` and `mz` are independent
- * facts about the same peak, so both can be wrong at once.
+ * stopping at the first — `relativeIntensity`, `mz`, and `intensity` are
+ * independent facts about the same peak, so more than one can be wrong at
+ * once.
  * @param peak - the peak to check
  * @param index - the peak's position in the draft, for error reporting
  * @returns every `BuildError` this peak fails; empty when it is valid
  */
 function checkPeak(peak: Peak, index: number): BuildError[] {
-  const errors: BuildError[] = [];
-  errors.push(...checkPeakRelativeIntensity(peak, index));
-  const mz = checkPeakMz(peak, index);
-  if (mz) {
-    errors.push(mz);
-  }
-  return errors;
+  return [
+    ...checkPeakRelativeIntensity(peak, index),
+    ...checkPeakMz(peak, index),
+    ...checkPeakIntensity(peak, index),
+  ];
 }
 
 /**
@@ -828,22 +907,30 @@ type VerbatimFieldListsAreExhaustive =
 /**
  * ACCESSION is the one field `buildRecord` declares mandatory, and the field
  * `validateRecord` derives a filename from; `serializeRecord` writes it as
- * the first line verbatim. It fails for the same two reasons as the other
- * verbatim fields — a newline/carriage return, or leading/trailing
- * whitespace, see `checkVerbatimText` — plus one ACCESSION-specific reason
- * the other fields do NOT share: being mandatory, it also fails when empty
- * or whitespace-only, where an ordinary field would simply be dropped (see
- * `checkVerbatimText`'s docstring). Reported under its own error codes and
- * with ACCESSION-specific wording, since ACCESSION missing or malformed is a
- * different, more fundamental problem for a caller to read than an ordinary
- * field being unusable.
+ * the first line verbatim. Superficially close to `checkVerbatimText`'s two
+ * checks (newline/carriage return, then leading/trailing whitespace) plus one
+ * ACCESSION-specific addition (mandatory emptiness) — but that framing hides
+ * a real difference, not just a shared-then-extended one: the emptiness
+ * check runs BEFORE the whitespace check and takes priority over it, so a
+ * whitespace-only value (`'   '`) reports `ACCESSION_EMPTY` here and never
+ * reaches the whitespace check at all. `checkVerbatimText` has no emptiness
+ * concept to run first, so the identical raw text on any other field reports
+ * `VERBATIM_WHITESPACE` instead. This is exactly why the two aren't unified
+ * into one code/one check despite the surface-level overlap: `ACCESSION`
+ * must decide "missing" before it can decide "malformed", where an ordinary
+ * field has no "missing" state at all — it is dropped when empty rather than
+ * rejected (see `checkVerbatimText`'s docstring). Reported under its own
+ * error codes and with ACCESSION-specific wording, since ACCESSION missing
+ * or malformed is a different, more fundamental problem for a caller to read
+ * than an ordinary field being unusable.
  * @param accession - the draft's `ACCESSION` value
  * @returns a `BuildError` when `accession` contains a newline or carriage
  * return (which would inject extra header lines into the serialized
- * record), is empty or whitespace-only (unreadable back — parseRecord
- * treats an empty ACCESSION as missing), or has leading or trailing
- * whitespace (trimmed away on reparse, so the reparsed value would differ
- * from the one supplied)
+ * record); is empty or whitespace-only (unreadable back — parseRecord
+ * treats an empty ACCESSION as missing — checked before, and instead of, the
+ * whitespace case below); or is non-empty after trimming but still has
+ * leading or trailing whitespace (trimmed away on reparse, so the reparsed
+ * value would differ from the one supplied)
  */
 function checkAccession(accession: string): BuildError | undefined {
   const location = describeField('ACCESSION');
@@ -945,45 +1032,42 @@ function checkVerbatimText(
  * contains a newline/carriage return (see `checkVerbatimText`,
  * {@link VERBATIM_STRING_FIELDS}, and {@link VERBATIM_ARRAY_FIELDS} for the
  * full field list — an EMPTY single-value field is not one of these
- * failures; it is dropped instead, see below); a peak's `relativeIntensity`
- * is not finite or is negative, or a peak's `mz` is negative (see
- * `checkPeakRelativeIntensity`/`checkPeakMz` — a negative `mz` is rejected
- * here rather than left for `calculateSplash`, because `calculateSplash`'s
- * histogram binning silently aliases a small negative `mz` onto the same bin
- * as a small non-negative one instead of rejecting it); a PK$ANNOTATION
- * row's `_original` cannot be trusted to reparse safely — it contains a
- * newline/carriage return, reparsing it threw, or reparsing it produced more
- * than one row (see `reparseAnnotationOriginal`); the annotation table's
- * `_PK$ANNOTATION_HEADER` cannot round-trip either, when the table is being
- * preserved verbatim (see `checkVerbatimText` at its call site below); or a
- * PK$ANNOTATION row cannot survive a round-trip — the parser did not map
- * every token of the row's source text into a typed field, its `annotation`
- * is empty/whitespace-only/contains internal whitespace, its
- * `mz`/`exactMass`/`errorPpm` is not finite, or the combination of optional
- * fields it sets cannot be expressed in the token-count format (see
- * `checkAnnotationRow` and the functions it calls for the full legal/illegal
- * table and why it is not simply "a prefix of
+ * failures; it is dropped instead, see below); a peak's `relativeIntensity`,
+ * `mz`, or `intensity` is not finite, or a peak's `relativeIntensity`, `mz`,
+ * or `intensity` is negative, or the whole `PK$PEAK` table has every
+ * intensity at `0` (see `checkPeakRelativeIntensity`/`checkPeakMz`/
+ * `checkPeakIntensity`/`checkPeakTableAllZeroIntensity` — the last three of
+ * these mirror exactly what `calculateSplash` itself refuses to hash, folded
+ * in here as `BuildError`s instead of letting a separate `RangeError` escape
+ * from one entry point alongside `BuildException`; see `checkPeakIntensity`'s
+ * docstring for how that duplication is kept from drifting out of sync); a
+ * PK$ANNOTATION row's `_original` cannot be trusted to reparse safely — it
+ * contains a newline/carriage return, reparsing it threw, or reparsing it
+ * produced more than one row (see `reparseAnnotationOriginal`); the
+ * annotation table's `_PK$ANNOTATION_HEADER` cannot round-trip either, when
+ * the table is being preserved verbatim (see `checkVerbatimText` at its call
+ * site below); or a PK$ANNOTATION row cannot survive a round-trip — the
+ * parser did not map every token of the row's source text into a typed
+ * field, its `annotation` is empty/whitespace-only/contains internal
+ * whitespace, its `mz`/`exactMass`/`errorPpm` is not finite, or the
+ * combination of optional fields it sets cannot be expressed in the
+ * token-count format (see `checkAnnotationRow` and the functions it calls for
+ * the full legal/illegal table and why it is not simply "a prefix of
  * `[annotation, exactMass, errorPpm]`"). `error.buildErrors` carries every
  * failure found, each with a machine-readable `code`, the structured
  * `fieldName`/`rowIndex`/`property` a caller can route on directly, and the
  * pre-formatted `field` display string built from them — see
  * {@link BuildException}.
- * @throws {RangeError} when the peak list is non-empty but cannot be hashed —
- * all-zero intensity, a negative intensity, or a non-finite `mz`/`intensity`.
- * An empty peak list is dropped rather than hashed, so it never reaches this
- * error. This comes from `calculateSplash` itself, raised after every guard
- * above has passed, so it is not part of `BuildException` — deliberately:
- * `calculateSplash` is the one place that decides what can be hashed, and
- * `buildRecord` reuses that decision rather than duplicating it as a second
- * set of numeric checks that could drift out of sync with it (unlike a
- * negative `mz`, where `checkPeakMz` exists precisely BECAUSE
- * `calculateSplash`'s own check is wrong — see its docstring — so there was
- * no correct behaviour to reuse). `SplashRule` calls the same function on the
- * same condition and chooses the opposite response: it swallows the error
- * ("skip rather than crash", since it is validating an already-serialized
- * record it cannot edit), where `buildRecord` propagates it, since silently
- * publishing a record with no `PK$SPLASH` would be worse than refusing to
- * build one.
+ *
+ * `calculateSplash` itself no longer has a way to throw from this function:
+ * every condition it would raise a `RangeError` for (empty peak list,
+ * non-finite/negative `mz` or `intensity`, all-zero intensity) is refused
+ * above first, and an empty peak list is dropped rather than reaching
+ * `calculateSplash` at all (see below). `SplashRule` still calls
+ * `calculateSplash` directly, without these guards, and still swallows its
+ * `RangeError` ("skip rather than crash", since it is validating an
+ * already-serialized record it cannot edit) — that asymmetry is real and
+ * deliberate, just no longer visible from `buildRecord`'s own contract.
  */
 export async function buildRecord(draft: RecordDraft): Promise<MassBankRecord> {
   const errors: BuildError[] = [];
@@ -1018,6 +1102,10 @@ export async function buildRecord(draft: RecordDraft): Promise<MassBankRecord> {
   if (peaks !== undefined) {
     for (const [index, peak] of peaks.entries()) {
       errors.push(...checkPeak(peak, index));
+    }
+    const allZeroIntensity = checkPeakTableAllZeroIntensity(peaks);
+    if (allZeroIntensity) {
+      errors.push(allZeroIntensity);
     }
   }
 

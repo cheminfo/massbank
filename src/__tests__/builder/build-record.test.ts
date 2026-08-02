@@ -15,8 +15,10 @@ import type {
   Annotation,
   AnnotationWithOriginal,
   MassBankRecord,
+  Peak,
 } from '../../record.ts';
 import { serializeRecord } from '../../serializer/record-serializer.ts';
+import { calculateSplash } from '../../splash/calculate-splash.ts';
 
 const minimal = () => ({
   ACCESSION: 'MSBNK-test-TST00001',
@@ -358,15 +360,26 @@ describe('buildRecord normalises what validation cannot detect', () => {
     expect(record.PK$NUM_PEAK).toBe(2);
   });
 
-  it('throws on a spectrum that cannot be hashed', async () => {
-    // Propagated deliberately. SplashRule swallows the same error; the builder
-    // does not, because an all-zero spectrum is not publishable.
-    await expect(
-      buildRecord({
+  it('throws BuildException, not RangeError, on a spectrum that cannot be hashed', async () => {
+    // Folded in from calculateSplash's own RangeError: SplashRule swallows
+    // that error on the validation side ("skip rather than crash"), but
+    // buildRecord refuses to publish a record with no PK$SPLASH, and now
+    // reports it as an ordinary BuildError like every other guard rather
+    // than as a second exception type from the same entry point.
+    let caught: unknown;
+    try {
+      await buildRecord({
         ...minimal(),
         PK$PEAK: [{ mz: 100.25, intensity: 0, relativeIntensity: 0 }],
-      }),
-    ).rejects.toThrow(RangeError);
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BuildException);
+    expect((caught as BuildException).buildErrors).toStrictEqual([
+      expect.objectContaining({ code: 'PEAK_ALL_ZERO_INTENSITY' }),
+    ]);
   });
 
   it('keeps _PK$ANNOTATION_HEADER when the annotation table round-trips unedited', async () => {
@@ -830,6 +843,242 @@ describe('buildRecord rejects a peak mz that would forge a SPLASH', () => {
     expect(stripOriginal(reparsed.PK$ANNOTATION)).toStrictEqual(
       record.PK$ANNOTATION,
     );
+  });
+});
+
+describe("buildRecord folds calculateSplash's peak-hashability checks into BuildException", () => {
+  // Before this guard existed, a non-finite/negative intensity, a non-finite
+  // mz, or an all-zero-intensity spectrum reached calculateSplash unguarded
+  // and surfaced as a bare RangeError — a second exception type from the same
+  // buildRecord call, alongside BuildException. These guards report the
+  // identical conditions as ordinary BuildErrors instead.
+
+  it('throws PEAK_MZ_NOT_FINITE when mz is NaN', async () => {
+    let caught: unknown;
+    try {
+      await buildRecord({
+        ...minimal(),
+        PK$PEAK: [{ mz: Number.NaN, intensity: 100, relativeIntensity: 999 }],
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BuildException);
+    expect((caught as BuildException).buildErrors).toStrictEqual([
+      expect.objectContaining({
+        code: 'PEAK_MZ_NOT_FINITE',
+        fieldName: 'PK$PEAK',
+        rowIndex: 0,
+        property: 'mz',
+        field: 'PK$PEAK[0].mz',
+      }),
+    ]);
+  });
+
+  it('throws PEAK_MZ_NOT_FINITE when mz is Infinity', async () => {
+    await expect(
+      buildRecord({
+        ...minimal(),
+        PK$PEAK: [
+          {
+            mz: Number.POSITIVE_INFINITY,
+            intensity: 100,
+            relativeIntensity: 999,
+          },
+        ],
+      }),
+    ).rejects.toThrow(BuildException);
+  });
+
+  it('throws PEAK_INTENSITY_NOT_FINITE when intensity is NaN', async () => {
+    let caught: unknown;
+    try {
+      await buildRecord({
+        ...minimal(),
+        PK$PEAK: [
+          { mz: 100.25, intensity: Number.NaN, relativeIntensity: 999 },
+        ],
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BuildException);
+    expect((caught as BuildException).buildErrors).toStrictEqual([
+      expect.objectContaining({
+        code: 'PEAK_INTENSITY_NOT_FINITE',
+        fieldName: 'PK$PEAK',
+        rowIndex: 0,
+        property: 'intensity',
+        field: 'PK$PEAK[0].intensity',
+      }),
+    ]);
+  });
+
+  it('throws PEAK_INTENSITY_NEGATIVE when intensity is negative', async () => {
+    let caught: unknown;
+    try {
+      await buildRecord({
+        ...minimal(),
+        PK$PEAK: [{ mz: 100.25, intensity: -1, relativeIntensity: 999 }],
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BuildException);
+    expect((caught as BuildException).buildErrors).toStrictEqual([
+      expect.objectContaining({
+        code: 'PEAK_INTENSITY_NEGATIVE',
+        fieldName: 'PK$PEAK',
+        rowIndex: 0,
+        property: 'intensity',
+        field: 'PK$PEAK[0].intensity',
+      }),
+    ]);
+  });
+
+  it('throws PEAK_ALL_ZERO_INTENSITY with no rowIndex or property — it is a fact about the whole table', async () => {
+    let caught: unknown;
+    try {
+      await buildRecord({
+        ...minimal(),
+        PK$PEAK: [
+          { mz: 100.25, intensity: 0, relativeIntensity: 0 },
+          { mz: 200, intensity: 0, relativeIntensity: 0 },
+        ],
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BuildException);
+
+    const { buildErrors } = caught as BuildException;
+
+    expect(buildErrors).toHaveLength(1);
+    expect(buildErrors[0]).toMatchObject({
+      code: 'PEAK_ALL_ZERO_INTENSITY',
+      fieldName: 'PK$PEAK',
+    });
+    expect(buildErrors[0]).not.toHaveProperty('rowIndex');
+    expect(buildErrors[0]).not.toHaveProperty('property');
+  });
+
+  it('does not throw PEAK_ALL_ZERO_INTENSITY when only one of several peaks is zero', async () => {
+    const record = await buildRecord({
+      ...minimal(),
+      PK$PEAK: [
+        { mz: 100.25, intensity: 0, relativeIntensity: 0 },
+        { mz: 200, intensity: 100, relativeIntensity: 999 },
+      ],
+    });
+
+    expect(record.PK$SPLASH).toMatch(/^splash10-/);
+  });
+});
+
+describe("property: buildRecord's peak-hashability guards match calculateSplash exactly", () => {
+  // The whole justification for folding calculateSplash's RangeError into
+  // BuildException is that buildRecord's guards mirror calculateSplash's own
+  // preconditions exactly — not "closely" or "usually". Each case below is
+  // classified against the REAL calculateSplash, not any verdict this file
+  // bakes in, so a future change to either side that breaks the
+  // correspondence surfaces as a failure here: a peak calculateSplash would
+  // happily hash but buildRecord rejects fails via `.rejects.toThrow`, and a
+  // peak calculateSplash refuses but buildRecord builds fails via the
+  // unhandled rejection never firing.
+  //
+  // mz is never negative here (0 is the smallest value used) and
+  // relativeIntensity is always a safe constant, so PEAK_MZ_NEGATIVE and the
+  // PEAK_RELATIVE_INTENSITY_* guards — which are NOT part of this fold, and
+  // deliberately still disagree with calculateSplash's own (inadequate, in
+  // the mz case; irrelevant, in the relativeIntensity case) opinion — never
+  // fire and so never confound the comparison.
+
+  const mzValues = [0, 100.25, Number.NaN, Number.POSITIVE_INFINITY];
+  const intensityValues = [
+    0,
+    100,
+    -5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+  ];
+
+  const singlePeakCases: Array<{ label: string; peaks: Peak[] }> = [];
+  for (const mz of mzValues) {
+    for (const intensity of intensityValues) {
+      singlePeakCases.push({
+        label: `single peak, mz=${mz} intensity=${intensity}`,
+        peaks: [{ mz, intensity, relativeIntensity: 999 }],
+      });
+    }
+  }
+
+  const multiPeakCases: Array<{ label: string; peaks: Peak[] }> = [
+    {
+      label: 'two ordinary peaks',
+      peaks: [
+        { mz: 100.25, intensity: 100, relativeIntensity: 999 },
+        { mz: 200, intensity: 50, relativeIntensity: 500 },
+      ],
+    },
+    {
+      label: 'first peak has a non-finite mz, second is ordinary',
+      peaks: [
+        { mz: Number.NaN, intensity: 100, relativeIntensity: 999 },
+        { mz: 200, intensity: 50, relativeIntensity: 500 },
+      ],
+    },
+    {
+      label: 'both peaks have zero intensity',
+      peaks: [
+        { mz: 100.25, intensity: 0, relativeIntensity: 0 },
+        { mz: 200, intensity: 0, relativeIntensity: 0 },
+      ],
+    },
+    {
+      label: 'one peak zero intensity, one ordinary',
+      peaks: [
+        { mz: 100.25, intensity: 0, relativeIntensity: 0 },
+        { mz: 200, intensity: 50, relativeIntensity: 500 },
+      ],
+    },
+  ];
+
+  const cases = [...singlePeakCases, ...multiPeakCases];
+
+  it('generates single- and multi-peak cases covering every calculateSplash precondition', () => {
+    expect(singlePeakCases).toHaveLength(24);
+    expect(multiPeakCases).toHaveLength(4);
+  });
+
+  it.each(cases)('$label', async ({ peaks }) => {
+    let splashRejects = false;
+    try {
+      await calculateSplash(
+        peaks.map((p) => ({ mz: p.mz, intensity: p.intensity })),
+      );
+    } catch (error) {
+      if (!(error instanceof RangeError)) {
+        throw error;
+      }
+      splashRejects = true;
+    }
+
+    let buildRejects = false;
+    try {
+      await buildRecord({ ...minimal(), PK$PEAK: peaks });
+    } catch (error) {
+      if (!(error instanceof BuildException)) {
+        throw error;
+      }
+      buildRejects = true;
+    }
+
+    expect(buildRejects).toBe(splashRejects);
   });
 });
 
