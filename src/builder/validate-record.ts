@@ -14,17 +14,17 @@ import { validateContent } from '../validator/validateContent.ts';
  * Two limits:
  *
  * The filename is derived from ACCESSION, because a MassBankRecord has none.
- * AccessionMatchRule therefore cannot fail here for any well-formed ACCESSION —
- * a green result is NOT evidence that the accession matches any external
- * filename. (An ACCESSION containing a path separator, e.g. 'foo/bar' or
- * 'foo\bar', would still trip the rule against a basename it never saw — a
- * confusing error, not a false pass.) Use validate() or validateContent() with
- * the real filename for that.
+ * AccessionMatchRule therefore cannot fail on this path for an ACCESSION with
+ * no path separator — a green result is NOT evidence that the accession
+ * matches any external filename. (An ACCESSION containing a path separator,
+ * e.g. 'foo/bar' or 'foo\bar', still trips the rule against a basename it
+ * never saw — a confusing error, not a false pass.) Use validate() or
+ * validateContent() with the real filename for that.
  *
- * Mandatory fields and controlled vocabularies are NOT checked. A record
- * containing only ACCESSION returns success. Those rules arrive in later
- * releases; until then a green result means "round-trips and passes the current
- * rule set", not "submittable to MassBank".
+ * Mandatory fields and controlled vocabularies are not currently checked. A
+ * record containing only ACCESSION returns success; a green result means
+ * "round-trips and passes the current rule set", not "submittable to
+ * MassBank".
  * @param record - the structured record to validate
  * @param options - validation options, forwarded to validateContent
  * @returns the validation result

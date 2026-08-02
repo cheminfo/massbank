@@ -127,10 +127,14 @@ Records whose annotation values contain a colon — lipid nomenclature such as `
 - **Rejects an edited row parsed from a real PK$ANNOTATION table whose source columns the parser did not fully map into typed fields.** The parser's token-count branches are positional but not all of them account for every token: a 3-column row is only fully captured when its third column looks numeric (otherwise the parser reads `[mz, annotation]` and drops the third column — a real shape in lipid nomenclature, e.g. `"494.35 1 [lyso_PC(alkyl-18:0,-)]-"`), and a row of 5 or more columns is always read as `[mz, annotation]` only. An **unedited** row like this builds successfully — it prints as its own source text, columns and all, per the bullet above. Only once a row has been edited does rebuilding from the parsed fields become necessary, and only then would it silently drop the uncaptured column(s); this only applies to rows carrying that raw source text — a caller building a draft by hand cannot trigger it.
 - **Rejects a non-finite or negative `relativeIntensity`.** `relativeIntensity` never reaches the SPLASH computation, so it is the one numeric peak field that would otherwise pass through unchecked. `relativeIntensity` is caller-owned: `buildRecord` validates it but never computes or rescales it. The MassBank convention is intensity scaled against the base peak (commonly to 999 or to 100), but the format does not fix which scale a given record uses, and deriving it on a `buildRecord(parseRecord(file))` round trip would silently rescale a value that was already correct in the source.
 - **Rejects an `ACCESSION` that could not be read back.** This covers a newline or carriage return (`ACCESSION` is written as the record's first line verbatim, so either would inject the following text as forged header lines once serialized), being empty or whitespace-only (parseRecord treats an empty `ACCESSION` as missing and throws on reparse), and leading or trailing whitespace (trimmed away on reparse, so the reparsed value would differ from the one supplied).
-- **Rejects a newline in any other field the serializer writes verbatim** — a single-value field on its own line, or an element of an array-valued field (`COMMENT`, `CH$NAME`, `CH$LINK`, `AC$MASS_SPECTROMETRY`, `AC$CHROMATOGRAPHY`, `MS$FOCUSED_ION`, `MS$DATA_PROCESSING`, `SP$LINK`, and the rest of the single-value header/CH$/AC$/SP$ fields). A newline would inject the text that follows it as forged lines once the record is reparsed. A bare carriage return with no newline is not rejected: `parseRecord` only starts a new line on `\n`, so such a value round-trips unchanged.
+- **Rejects a newline or carriage return in any other field the serializer writes verbatim** — a single-value field on its own line, or an element of an array-valued field (`COMMENT`, `CH$NAME`, `CH$LINK`, `AC$MASS_SPECTROMETRY`, `AC$CHROMATOGRAPHY`, `MS$FOCUSED_ION`, `MS$DATA_PROCESSING`, `SP$LINK`, and the rest of the single-value header/CH$/AC$/SP$ fields). A newline would inject the text that follows it as forged lines once the record is reparsed. A bare carriage return with no newline reparses back to the identical string at this layer, but is rejected anyway: `validateRecord`'s serialization round-trip rule normalizes any `\r` to `\n` before comparing but not on the freshly reserialized side, so a record containing one would fail that check every time.
 - Never mutates the draft passed in, but the returned record **shares array references** with it for every array-valued field it doesn't rebuild (e.g. `CH$NAME`, `COMMENT`, `AC$MASS_SPECTROMETRY`) — those are copied by reference, not deep-cloned. Mutating one of those arrays on the returned record mutates the same array on the original draft. `PK$PEAK` and `PK$ANNOTATION` are the exception: they're always rebuilt into fresh arrays.
 
+`buildRecord` reports every failure it finds in one pass, not just the first — a draft with three unrelated problems throws one `BuildException` carrying all three, so a caller building a record editor can show the user everything wrong at once instead of fixing and resubmitting one error at a time. Each failure in `error.buildErrors` carries a machine-readable `code` (see `BuildErrorCode`), the top-level `fieldName` it's about, a `rowIndex` and `property` when the failure concerns one row or one property of a row (both absent for a whole-field failure), and a pre-formatted `field` display string (e.g. `'PK$ANNOTATION[3].mz'`) built from the three. `rowIndex` is **draft order**, not output order — `buildRecord` sorts `PK$PEAK`/`PK$ANNOTATION` by `mz` only in the record it successfully *returns*, and a draft that fails validation is never built, so `PK$ANNOTATION[0]` in an error can name a different row than `record.PK$ANNOTATION[0]` after a later, successful build.
+
 ```typescript
+import { BuildException, buildRecord } from 'massbank';
+
 // Duplicate m/z survive intact.
 await buildRecord({
   ACCESSION: 'MSBNK-test-TST00001',
@@ -156,7 +160,30 @@ try {
     PK$ANNOTATION: [{ mz: 100.25, exactMass: 194.0804 }],
   });
 } catch (error) {
-  // BuildException: PK$ANNOTATION[0]: PK$ANNOTATION row 0 (mz 100.25): exactMass is set without annotation or errorPpm. ...
+  if (error instanceof BuildException) {
+    console.log(error.buildErrors[0]);
+    // {
+    //   code: 'ANNOTATION_EXACT_MASS_WITHOUT_ANNOTATION',
+    //   fieldName: 'PK$ANNOTATION',
+    //   rowIndex: 0,
+    //   field: 'PK$ANNOTATION[0]',
+    //   message: 'PK$ANNOTATION row 0 (mz 100.25): exactMass is set without annotation or errorPpm. ...',
+    // }
+  }
+}
+
+// Every failure is reported, not just the first: an empty ACCESSION next to a
+// negative mz and an invalid relativeIntensity all land in one BuildException.
+try {
+  await buildRecord({
+    ACCESSION: '',
+    PK$PEAK: [{ mz: -50, intensity: 100, relativeIntensity: -1 }],
+  });
+} catch (error) {
+  if (error instanceof BuildException) {
+    console.log(error.buildErrors.map((e) => e.code));
+    // ['ACCESSION_EMPTY', 'PEAK_RELATIVE_INTENSITY_NEGATIVE', 'PEAK_MZ_NEGATIVE']
+  }
 }
 
 // A negative mz is rejected outright: it isn't a real peak position, and
@@ -168,14 +195,24 @@ try {
     PK$PEAK: [{ mz: -50, intensity: 100, relativeIntensity: 999 }],
   });
 } catch (error) {
-  // BuildException: PK$PEAK[0].mz: PK$PEAK row 0 (mz -50): mz is negative. ...
+  if (error instanceof BuildException) {
+    console.log(error.buildErrors[0]);
+    // { code: 'PEAK_MZ_NEGATIVE', fieldName: 'PK$PEAK', rowIndex: 0, property: 'mz', field: 'PK$PEAK[0].mz', message: '...' }
+  }
 }
 
 // An all-zero, negative-intensity, or non-finite spectrum can't be hashed, so
 // buildRecord throws instead of silently producing a record with no
-// PK$SPLASH. This is a plain RangeError from calculateSplash itself, raised
-// separately from BuildException because it can only be detected once every
-// BuildException guard above has already passed.
+// PK$SPLASH. This is a plain RangeError from calculateSplash itself, not a
+// BuildException: buildRecord deliberately reuses calculateSplash's own
+// hashability decision rather than duplicating it as a second set of numeric
+// checks that could drift out of sync — unlike a negative peak mz (above),
+// where calculateSplash's own check is actually wrong (see the previous
+// bullet), so there was no existing behaviour worth reusing. SplashRule calls
+// calculateSplash on the same condition and does the opposite — it skips the
+// check rather than failing, because it is validating an already-serialized
+// record it cannot edit; buildRecord is about to publish a fresh one, so it
+// propagates the error instead.
 try {
   await buildRecord({
     ACCESSION: 'MSBNK-test-TST00001',
@@ -199,13 +236,15 @@ This package also exports, from the package root:
 
 - `parseRecord` and `serializeRecord` — the parser and serializer `buildRecord`/`validateRecord` are built on
 - `ParseException` — the error `parseRecord` throws on malformed input
-- Types: `Annotation`, `MassBankRecord`, `ParseError`, `Peak`, and `RecordDraft`
+- `BuildException` — the error `buildRecord` throws when a draft fails one or more guards
+- Types: `Annotation`, `BuildError`, `BuildErrorCode`, `MassBankRecord`, `ParseError`, `Peak`, and `RecordDraft`
 
-Three things to keep straight when working with these directly:
+Four things to keep straight when working with these directly:
 
 - **`Peak` and `SplashPeak` are different shapes.** `Peak` (used by records and the builder) is `{ mz, intensity, relativeIntensity }`. `SplashPeak` (used by the `splash` module, also exported from the root) is `{ mz, intensity }` — the SPLASH algorithm never reads `relativeIntensity`. A `Peak` satisfies `SplashPeak` structurally, but they are declared separately — don't assume one is the other.
 - **`resolveSplashFromRecord` takes record _text_; `validateRecord` takes a record _object_.** `resolveSplashFromRecord(content)` parses the text itself to reconcile `PK$SPLASH` against the peaks. `validateRecord(record, options?)` takes an already-structured record and serializes it before validating. The two aren't interchangeable — passing text to `validateRecord`, or a record object to `resolveSplashFromRecord`, is a type error.
 - **`parseRecord` throws `ParseException`, not a plain `Error`.** It carries a structured `parseError: ParseError` with `line`, `column`, `position`, and `message`, so a caller can `instanceof ParseException` and read the failure location instead of string-matching the message.
+- **`buildRecord` throws `BuildException`, not a plain `Error`, and carries every failure, not just the first.** It carries a structured `buildErrors: readonly BuildError[]` — one entry per failure, each with a machine-readable `code: BuildErrorCode`, the structured `fieldName`/`rowIndex`/`property` a caller can route on directly, and a pre-formatted `field` display string — so a caller can `instanceof BuildException` and handle every problem with a draft in one pass instead of fixing and resubmitting once per failure. See [Builder API](#builder-api) above for the full `BuildErrorCode` union and what `rowIndex` means.
 
 ## API Reference
 
@@ -254,7 +293,7 @@ Normalize a record draft into a canonical record. See [Builder API](#builder-api
 
 **Returns:** `Promise<MassBankRecord>`
 
-**Throws:** `BuildException` if `ACCESSION` contains a newline or carriage return, is empty or whitespace-only, or has leading or trailing whitespace; if any other field the serializer writes verbatim (or an element of an array-valued one) is empty, whitespace-padded, or contains a newline or carriage return; if a peak's `relativeIntensity` is not finite or is negative, or a peak's `mz` is negative; or if a `PK$ANNOTATION` row cannot survive a round-trip (including an _edited_ parsed row whose source columns the parser did not fully map into typed fields — an unedited one builds successfully instead, preserving its real source text) — `error.buildErrors` carries every failure found, not only the first; see [Builder API](#builder-api) above for the full legal/illegal combinations. Separately, **`RangeError`** if a non-empty `PK$PEAK` passes every guard above but still cannot be hashed (all-zero intensity, a negative intensity, or a non-finite `mz`/`intensity`) — thrown by `calculateSplash` itself, after every `BuildException` guard has already passed, so it is never part of `error.buildErrors`.
+**Throws:** `BuildException` if `ACCESSION` contains a newline or carriage return, is empty or whitespace-only, or has leading or trailing whitespace; if any other field the serializer writes verbatim (or an element of an array-valued one) is whitespace-padded or contains a newline or carriage return (an _empty_ single-value field is not one of these failures; it is dropped instead, see [Builder API](#builder-api) above); if a peak's `relativeIntensity` is not finite or is negative, or a peak's `mz` is negative; or if a `PK$ANNOTATION` row cannot survive a round-trip (including an _edited_ parsed row whose source columns the parser did not fully map into typed fields — an unedited one builds successfully instead, preserving its real source text) — `error.buildErrors` carries every failure found, not only the first, each with a `code: BuildErrorCode` plus the structured `fieldName`/`rowIndex`/`property` location described above; see [Builder API](#builder-api) above for the full legal/illegal combinations. Separately, **`RangeError`** if a non-empty `PK$PEAK` passes every guard above but still cannot be hashed (all-zero intensity, a negative intensity, or a non-finite `mz`/`intensity`) — thrown by `calculateSplash` itself and deliberately not folded into `BuildException`, since `buildRecord` reuses `calculateSplash`'s own hashability decision rather than duplicating it (see the last example in [Builder API](#builder-api) above), so it is never part of `error.buildErrors`.
 
 ### `validateRecord(record, options?)`
 
