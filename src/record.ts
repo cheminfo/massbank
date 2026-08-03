@@ -1,5 +1,5 @@
 /**
- * MassBank InternalRecord structure
+ * MassBank record structures
  */
 
 export interface Peak {
@@ -29,7 +29,7 @@ export interface AnnotationWithOriginal extends Annotation {
   _original?: string;
 }
 
-export interface InternalRecord {
+export interface MassBankRecord {
   // Header fields
   ACCESSION: string;
   RECORD_TITLE?: string;
@@ -76,7 +76,7 @@ export interface InternalRecord {
   SP$SAMPLE?: string;
 }
 
-export interface MassBankRecord {
+export interface GroupedRecord {
   accession: string;
   recordTitle?: string;
   date?: string;

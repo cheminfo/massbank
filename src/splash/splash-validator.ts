@@ -1,4 +1,4 @@
-import type { InternalRecord } from '../record.js';
+import type { MassBankRecord } from '../record.js';
 
 import type { SplashPeak } from './calculate-splash.js';
 import { calculateSplash } from './calculate-splash.js';
@@ -30,7 +30,7 @@ export class SplashValidator implements ISplashValidator {
    * @param record - the record to validate
    * @returns true if the SPLASH is absent/not-applicable or matches the peaks
    */
-  async validate(record: InternalRecord): Promise<boolean> {
+  async validate(record: MassBankRecord): Promise<boolean> {
     if (!record.PK$SPLASH || !record.PK$PEAK || record.PK$PEAK.length === 0) {
       return true;
     }

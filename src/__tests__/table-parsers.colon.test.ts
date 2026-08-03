@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { parseRecord } from '../parser/parse-record.js';
 import { PeakTableParser } from '../parser/table-parsers.js';
-import type { InternalRecord } from '../record.js';
+import type { MassBankRecord } from '../record.js';
 import { serializeRecord } from '../serializer/record-serializer.js';
 import { validateContent } from '../validator/validateContent.js';
 
@@ -80,7 +80,7 @@ describe('validateContent with colons inside annotation values', () => {
 
 describe('PeakTableParser with a malformed non-numeric row', () => {
   it('does not treat a stray colon line as ending the table early', () => {
-    const record: InternalRecord = { ACCESSION: '' };
+    const record: MassBankRecord = { ACCESSION: '' };
     const lines = [
       '  100.0 1.0 999',
       '  junk:x', // lowercase on purpose: a mis-cased key must NOT terminate the table
