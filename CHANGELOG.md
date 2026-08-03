@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/cheminfo/massbank/compare/v0.4.1...v0.5.0) (2026-08-03)
+
+
+### Features
+
+* add record builder API with parse and serialize exports ([#16](https://github.com/cheminfo/massbank/issues/16)) ([f4f999c](https://github.com/cheminfo/massbank/commit/f4f999cbe2eb4293d82335fcb984935430a41f92))
+
 ## [0.4.1](https://github.com/cheminfo/massbank/compare/v0.4.0...v0.4.1) (2026-07-27)
 
 
