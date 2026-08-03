@@ -361,11 +361,11 @@ describe('buildRecord normalises what validation cannot detect', () => {
   });
 
   it('throws BuildException, not RangeError, on a spectrum that cannot be hashed', async () => {
-    // Folded in from calculateSplash's own RangeError: SplashRule swallows
-    // that error on the validation side ("skip rather than crash"), but
-    // buildRecord refuses to publish a record with no PK$SPLASH, and now
-    // reports it as an ordinary BuildError like every other guard rather
-    // than as a second exception type from the same entry point.
+    // SplashRule swallows calculateSplash's own RangeError on the validation
+    // side ("skip rather than crash"), but buildRecord refuses to publish a
+    // record with no PK$SPLASH, and reports it as an ordinary BuildError like
+    // every other guard rather than as a second exception type from the same
+    // entry point.
     let caught: unknown;
     try {
       await buildRecord({
@@ -532,10 +532,12 @@ describe('buildRecord treats an annotation table with no _original anywhere as n
   // A hand-built PK$ANNOTATION array (an editor UI replacing the array
   // outright, say) has no row with an `_original` at all.
   // wasAnnotationRowEdited reports `edited: false` for every such row —
-  // there is nothing to compare a fresh row against — so the OLD
-  // `!annotations.some(edited)` predicate treated this as "unanimously
-  // unedited" and wrongly kept whatever `_PK$ANNOTATION_HEADER` the draft
-  // happened to carry over from an unrelated prior record.
+  // there is nothing to compare a fresh row against — so `preserveOriginals`
+  // (build-record.ts) additionally requires every row to carry an
+  // `_original` before treating a table as unanimously unedited; otherwise a
+  // table with no `_original` anywhere would wrongly keep whatever
+  // `_PK$ANNOTATION_HEADER` the draft happened to carry over from an
+  // unrelated prior record.
 
   it('drops a stale _PK$ANNOTATION_HEADER when every row is hand-built (no row has _original)', async () => {
     const stale = parseRecord(`ACCESSION: MSBNK-test-TST00001
@@ -606,9 +608,11 @@ describe('buildRecord guards PK$ANNOTATION _original against line injection', ()
   });
 
   it('does not let a poisoned _original abort validation before other errors are collected', async () => {
-    // Before this guard, reparsing this _original threw a raw ParseException
-    // out of buildRecord, which aborted the whole function before the
-    // already-collected ACCESSION_EMPTY error ever reached a BuildException.
+    // This _original reparses as a real header field with an invalid value
+    // (PK$NUM_PEAK: notanumber), which throws inside reparseAnnotationOriginal
+    // — caught there and reported as a BuildError, so the already-collected
+    // ACCESSION_EMPTY error still reaches the BuildException instead of the
+    // raw ParseException aborting buildRecord first.
     const poisoned: AnnotationWithOriginal = {
       mz: 100.25,
       annotation: 'frag',
@@ -792,9 +796,9 @@ describe('buildRecord rejects a peak mz that would forge a SPLASH', () => {
   });
 
   it('throws when a negative mz peak is mixed with a positive one', async () => {
-    // Measured: a stray negative mz forged splash10-0udi-9000000000-... with
-    // zero validation errors before this guard existed, because
-    // calculateSplash's own finiteness check has no opinion on sign.
+    // Measured: calculateSplash's own finiteness check has no opinion on
+    // sign, so left unguarded a stray negative mz forges a
+    // splash10-0udi-9000000000-... hash with zero validation errors.
     await expect(
       buildRecord({
         ...minimal(),
@@ -847,11 +851,11 @@ describe('buildRecord rejects a peak mz that would forge a SPLASH', () => {
 });
 
 describe("buildRecord folds calculateSplash's peak-hashability checks into BuildException", () => {
-  // Before this guard existed, a non-finite/negative intensity, a non-finite
-  // mz, or an all-zero-intensity spectrum reached calculateSplash unguarded
-  // and surfaced as a bare RangeError — a second exception type from the same
-  // buildRecord call, alongside BuildException. These guards report the
-  // identical conditions as ordinary BuildErrors instead.
+  // Left unguarded, a non-finite/negative intensity, a non-finite mz, or an
+  // all-zero-intensity spectrum would reach calculateSplash and surface as a
+  // bare RangeError — a second exception type from the same buildRecord
+  // call, alongside BuildException. These guards intercept the identical
+  // conditions and report them as ordinary BuildErrors instead.
 
   it('throws PEAK_MZ_NOT_FINITE when mz is NaN', async () => {
     let caught: unknown;
@@ -1340,7 +1344,7 @@ describe('buildRecord rejects PK$ANNOTATION rows the format cannot express', () 
     // string to be numeric) or a full-numeric regex would both treat this as
     // "safe" text and let it through, and it reparses to
     // { exactMass: 5, errorPpm: 194.0804 } with the annotation destroyed —
-    // the Critical this whole guard exists to prevent, restored.
+    // exactly the corruption this guard exists to prevent.
     await expect(
       buildRecord({
         ...minimal(),
@@ -2030,7 +2034,7 @@ describe("buildRecord's BuildError payload is structured, not a message to parse
     // `error.message.startsWith(error.field)` is false and formatMessage must
     // add the "field: " prefix. The dedupe test above only ever exercises the
     // OTHER branch (ACCESSION/VERBATIM messages, which do start with their
-    // field) — this pins the branch that was previously untested entirely.
+    // field) — this pins the branch that test cannot reach at all.
     let caught: unknown;
     try {
       await buildRecord({

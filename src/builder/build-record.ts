@@ -667,11 +667,11 @@ function checkPeakMz(peak: Peak, index: number): BuildError[] {
 /**
  * `intensity` — unlike `relativeIntensity` — feeds `calculateSplash`
  * directly (`SplashPeak` is `{mz, intensity}`), which already refuses to
- * hash a non-finite or negative one, throwing a plain `RangeError`. Before
- * this guard existed, that `RangeError` reached a `buildRecord` caller
- * separately from every other failure, alongside `BuildException` from one
- * entry point — two exception types for what is, from a caller's seat, the
- * same kind of problem: bad peak data.
+ * hash a non-finite or negative one, throwing a plain `RangeError`. Left
+ * unguarded, that `RangeError` would reach a `buildRecord` caller separately
+ * from every other failure, alongside `BuildException` from one entry point
+ * — two exception types for what is, from a caller's seat, the same kind of
+ * problem: bad peak data.
  *
  * Reusing `calculateSplash`'s own decision (rather than reimplementing an
  * independent check that could drift out of sync with it) is deliberate:
@@ -1055,10 +1055,11 @@ function checkVerbatimText(
  * `error.buildErrors` carries every failure found, each with a
  * machine-readable `code`, the structured `fieldName`/`rowIndex`/`property`
  * a caller can route on directly, and the pre-formatted `field` display
- * string built from them — see {@link BuildException}. `calculateSplash`
- * itself no longer has a way to throw from this function — see
- * `checkPeakIntensity`'s docstring for the fold and the `SplashRule`
- * asymmetry it leaves in place on the validation side.
+ * string built from them — see {@link BuildException}. Every condition
+ * `calculateSplash` would throw for is refused above first, so
+ * `calculateSplash` has no way to throw from this function — see
+ * `checkPeakIntensity`'s docstring for the `SplashRule` asymmetry this
+ * leaves in place on the validation side.
  */
 export async function buildRecord(draft: RecordDraft): Promise<MassBankRecord> {
   const errors: BuildError[] = [];
