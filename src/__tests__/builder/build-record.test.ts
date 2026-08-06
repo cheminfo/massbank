@@ -57,6 +57,20 @@ PK$ANNOTATION: m/z tentative_formula formula_count exact_mass error(ppm)
 //
 `);
 
+// `m/z mass exact_mass` names exactMass twice, so mapAnnotationHeader refuses
+// it and there is no column order to place a rebuilt row in. Both the writer and
+// the reader then fall back to inferring the layout independently — the
+// disagreement this release exists to remove — so buildRecord declines to
+// rebuild a row under such a header rather than reinstate the old guard suite
+// for this one case.
+const unmappableHeaderRecord = () =>
+  parseRecord(`ACCESSION: MSBNK-test-TST00001
+PK$ANNOTATION: m/z mass exact_mass
+  100.25 100.24 100.23
+  200.5 200.4 200.3
+//
+`);
+
 /**
  * The first element of a non-empty array, or throw. A plain `array[0]!` would
  * silence `noUncheckedIndexedAccess` rather than prove the array is
@@ -1480,6 +1494,46 @@ PK$ANNOTATION: m/z tentative_formula formula_count mass error(ppm)
     });
     expect(buildErrors[0]?.message).toContain('column "mass" is empty');
     expect(buildErrors[0]?.message).toContain('"error(ppm)"');
+  });
+
+  it('throws when a row must be rebuilt under a header that cannot be read positionally', async () => {
+    const parsed = unmappableHeaderRecord();
+    // Only the first row is edited, so the second still prints as its own
+    // source text — which is what keeps the unreadable header in the record.
+    const edited = (parsed.PK$ANNOTATION ?? []).map((row, index) =>
+      index === 0 ? { ...row, mz: row.mz + 0.001 } : row,
+    );
+
+    let caught: unknown;
+    try {
+      await buildRecord({ ...parsed, PK$ANNOTATION: edited });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BuildException);
+
+    const { buildErrors } = caught as BuildException;
+
+    expect(buildErrors).toHaveLength(1);
+    expect(buildErrors[0]).toMatchObject({
+      code: 'ANNOTATION_HEADER_NOT_MAPPABLE',
+      fieldName: 'PK$ANNOTATION',
+      rowIndex: 0,
+      field: 'PK$ANNOTATION[0]',
+    });
+  });
+
+  it('accepts the same unreadable header while every row still prints verbatim', async () => {
+    // Refusing to REBUILD costs nothing here: an untouched table round-trips on
+    // its own source text, so the guard above must not reject this.
+    const parsed = unmappableHeaderRecord();
+
+    const record = await buildRecord(parsed);
+
+    expect(serializeRecord(record)).toContain(
+      'PK$ANNOTATION: m/z mass exact_mass\n  100.25 100.24 100.23\n  200.5 200.4 200.3\n',
+    );
   });
 
   it('throws when annotation is empty', async () => {

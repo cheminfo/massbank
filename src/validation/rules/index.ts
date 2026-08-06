@@ -1,3 +1,4 @@
+export { AnnotationHeaderRule } from './annotation-header-rule.js';
 export { AccessionMatchRule } from './accession-match-rule.js';
 export { NonStandardCharsRule } from './non-standard-chars-rule.js';
 export { SerializationRule } from './serialization-rule.js';

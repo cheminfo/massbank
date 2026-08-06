@@ -1,6 +1,7 @@
 import type { IValidationRule } from './interfaces.js';
 import {
   AccessionMatchRule,
+  AnnotationHeaderRule,
   NonStandardCharsRule,
   SerializationRule,
   SplashRule,
@@ -17,6 +18,7 @@ export class RecordValidator {
     // Default rules (can be overridden via dependency injection)
     this.rules = rules || [
       new AccessionMatchRule(),
+      new AnnotationHeaderRule(),
       new NonStandardCharsRule(),
       new SerializationRule(),
       new SplashRule(),
