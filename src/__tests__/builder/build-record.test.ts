@@ -153,9 +153,32 @@ function naiveRebuildAnnotationText(row: Annotation): string {
  * @returns what the parser produces from `text` today, or `undefined` if it
  * drops the line entirely
  */
-function parseAnnotationText(text: string): AnnotationWithOriginal | undefined {
-  return parseRecord(`ACCESSION: sweep\nPK$ANNOTATION: m/z\n  ${text}\n//\n`)
-    .PK$ANNOTATION?.[0];
+function parseAnnotationText(
+  text: string,
+  header = 'm/z',
+): AnnotationWithOriginal | undefined {
+  return parseRecord(
+    `ACCESSION: sweep\nPK$ANNOTATION: ${header}\n  ${text}\n//\n`,
+  ).PK$ANNOTATION?.[0];
+}
+
+/**
+ * The header `naiveRebuildAnnotationText` implicitly writes against.
+ *
+ * Since 0.5.1 the parser reads columns from the header, so classifying a
+ * rebuilt row by reparsing it under a stub (`m/z`) would drop every column past
+ * the first and call almost every shape unrepresentable. The classifier has to
+ * reparse under a header naming the columns the rebuild actually emitted —
+ * mirroring what the serializer derives for a record with no header of its own.
+ * @param row - the row about to be naively rebuilt
+ * @returns the matching header value
+ */
+function naiveRebuildHeader(row: Annotation): string {
+  const tokens = ['m/z'];
+  if (row.annotation !== undefined) tokens.push('annotation');
+  if (row.exactMass !== undefined) tokens.push('exact_mass');
+  if (row.errorPpm !== undefined) tokens.push('error(ppm)');
+  return tokens.join(' ');
 }
 
 /**
@@ -189,7 +212,10 @@ function annotationFieldsMatch(
 function wouldRoundTripIfRebuilt(row: Annotation): boolean {
   return annotationFieldsMatch(
     row,
-    parseAnnotationText(naiveRebuildAnnotationText(row)),
+    parseAnnotationText(
+      naiveRebuildAnnotationText(row),
+      naiveRebuildHeader(row),
+    ),
   );
 }
 
@@ -434,7 +460,7 @@ describe('buildRecord preserves a PK$ANNOTATION table per-row, not per-table-by-
   // cover the table-wide all-or-nothing rule directly against a multi-row
   // table, and the edit-detection predicate against fields other than mz.
 
-  it('discards every row _original once any row in the table is edited, even an untouched one', async () => {
+  it('discards only the edited row\'s _original, leaving an untouched row verbatim', async () => {
     const parsed = parseRecord(`ACCESSION: MSBNK-test-TST00001
 PK$ANNOTATION: m/z tentative_formula formula_count exact_mass error(ppm)
   59.0134 C2H3O2- 1 59.0133 2.9
@@ -445,17 +471,37 @@ PK$ANNOTATION: m/z tentative_formula formula_count exact_mass error(ppm)
     const edited = (parsed.PK$ANNOTATION ?? []).map((a, index) =>
       index === 0 ? { ...a, mz: a.mz + 0.001 } : a,
     );
-    const draft = { ...parsed, PK$ANNOTATION: edited };
 
-    // Both rows have 5 columns, so once table-wide preservation is dropped,
-    // the untouched row (index 1) is ALSO run through
-    // checkAnnotationDiscardedColumns and refused — proving it was rebuilt
-    // and re-checked, not silently preserved because only the OTHER row
-    // changed.
-    await expect(buildRecord(draft)).rejects.toThrow(BuildException);
-    await expect(buildRecord(draft)).rejects.toThrow(
-      /row 1 \(mz 100\.25\).*5 columns/,
-    );
+    const built = await buildRecord({ ...parsed, PK$ANNOTATION: edited });
+    const rows = built.PK$ANNOTATION ?? [];
+
+    // Before header-driven parsing this whole table was refused: dropping
+    // table-wide preservation sent the untouched row through the
+    // discarded-column guard too. Now each row stands on its own.
+    const rebuilt = rows[0];
+    const untouched = rows[1];
+
+    // The edited row lost its stale source text and was rebuilt — losslessly,
+    // which is the point: every column the header names came back, including
+    // the one with no typed field.
+    expect(rebuilt?._original).toBeUndefined();
+    expect(rebuilt?.annotation).toBe('C2H3O2-');
+    expect(rebuilt?.exactMass).toBe(59.0133);
+    expect(rebuilt?.errorPpm).toBe(2.9);
+    expect(rebuilt?.extra).toStrictEqual({ formula_count: '1' });
+
+    // The untouched row kept its own text and prints verbatim beside it.
+    expect(untouched?._original).toBe('100.25 C5H4O2- 1 100.24 1.5');
+
+    // A verbatim row and a rebuilt one are interchangeable under one header —
+    // the property that makes per-row preservation safe at all.
+    const table = serializeRecord(built)
+      .split('\n')
+      .filter((line) => /^ {2}\d/.test(line));
+    expect(table).toStrictEqual([
+      '  59.014399999999995 C2H3O2- 1 59.0133 2.9',
+      '  100.25 C5H4O2- 1 100.24 1.5',
+    ]);
   });
 
   it.each([
@@ -563,7 +609,7 @@ PK$ANNOTATION: m/z tentative_formula formula_count mass error(ppm)
     // misassign every column downstream (formula_count/mass/error(ppm) all
     // shift by one silently) with no BuildError to catch it.
     expect(serializeRecord(record)).toContain(
-      'PK$ANNOTATION: m/z annotation exact_mass error(ppm)',
+      'PK$ANNOTATION: m/z annotation',
     );
   });
 });
