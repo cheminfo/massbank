@@ -255,86 +255,6 @@ function wasAnnotationRowEdited(
   return { edited: !annotationTypedFieldsMatch(row, reparse.annotation) };
 }
 
-/**
- * A row parsed from a real PK$ANNOTATION table can carry a column the parser
- * never mapped into any typed field, because table-parsers.ts's per-token-count
- * branches are positional and not every one accounts for every token — see
- * `checkAnnotationShape`'s docstring for the full branch-by-branch breakdown
- * this function and that one are both driven by. The two branches this check
- * actually flags: a 3-token row only maps its third token when it looks
- * numeric (otherwise the branch falls back to `[mz, annotation]` and drops it
- * — a real shape, e.g. lipid annotations such as
- * `"494.35 1 [lyso_PC(alkyl-18:0,-)]-"`), and a row of 5 or more tokens is
- * always read as `[mz, annotation]` only, regardless of what follows. The
- * 1/2/4-token branches assign every token unconditionally, so they never
- * drop a column this check would catch — a non-numeric token landing in
- * `exactMass`/`errorPpm` there becomes `NaN` instead (e.g.
- * `"100.25 [M+H]+ notanumber alsonot"` assigns all 4 tokens), caught
- * separately by `checkAnnotationFiniteValues`, not by this check.
- *
- * `RecordDraft` types `PK$ANNOTATION` as `Annotation[]`, which has no
- * `_original`, but a caller can still pass a parsed `MassBankRecord` through
- * — the `Omit` only blocks object literals, not variables — so `_original`
- * can be present at runtime even though the type says otherwise. When a
- * token was dropped this way, rebuilding from the mapped fields alone would
- * silently reprint the row without it, under a header that still claims the
- * dropped column exists.
- *
- * That is only a real loss when the row's `_original` is actually about to
- * be discarded and rebuilt from typed fields. When `preserveOriginals` is
- * true — the whole table round-trips unedited, see `wasAnnotationRowEdited`
- * — this row prints as its own `_original` text verbatim instead, so a
- * column the typed fields don't capture isn't lost, it just isn't reflected
- * in `row.exactMass`/`row.errorPpm`; this check is a no-op in that case.
- *
- * A caller's own edits (which may legitimately reduce the token count, e.g.
- * clearing `errorPpm`) are unaffected: this only inspects `_original`, which
- * a hand-built draft row never carries.
- * @param row - the annotation row to check
- * @param index - the row's position in the draft, for error reporting
- * @param preserveOriginals - true when no row in the table has been edited,
- * so this row's `_original` (if any) is being kept rather than discarded
- * @returns a `BuildError` when `_original` is being discarded and the
- * parser did not map every token of `row._original` into a typed field
- */
-function checkAnnotationDiscardedColumns(
-  row: AnnotationWithOriginal,
-  index: number,
-  preserveOriginals: boolean,
-): BuildError | undefined {
-  if (row._original === undefined || preserveOriginals) {
-    return undefined;
-  }
-  const parts = row._original.trim().split(/\s+/);
-  const tokenCount = parts.length;
-  const location = describeField('PK$ANNOTATION', index);
-
-  // Both branches below report the same code: a caller's remedy is the same
-  // regardless of which one fired ("this row carries more source columns
-  // than the typed shape can hold; reduce it to a supported combination, or
-  // accept the loss") — see checkAnnotationShape's docstring for the full
-  // token-count argument this and that function are both driven by.
-  if (tokenCount === 3) {
-    const third = parts[2];
-    if (third === undefined || !looksNumeric(third)) {
-      return {
-        code: 'ANNOTATION_DISCARDED_COLUMN',
-        ...location,
-        message: `PK$ANNOTATION row ${index} (mz ${row.mz}): the source row has 3 columns, but the third column ("${third ?? ''}") does not look numeric, so the parser reads this row as [mz, annotation] only — the third column would be lost if this row is rebuilt.`,
-      };
-    }
-    return undefined;
-  }
-
-  if (tokenCount >= 5) {
-    return {
-      code: 'ANNOTATION_DISCARDED_COLUMN',
-      ...location,
-      message: `PK$ANNOTATION row ${index} (mz ${row.mz}): the source row has ${tokenCount} columns, but the parser has no format beyond 4 columns and reads it as [mz, annotation] only — columns beyond the second would be lost if this row is rebuilt.`,
-    };
-  }
-  return undefined;
-}
 
 /**
  * PK$ANNOTATION rows are whitespace-delimited tokens (table-parsers.ts splits
@@ -544,14 +464,6 @@ function checkAnnotationRow(
 ): BuildError[] {
   const errors: BuildError[] = [];
 
-  const discardedColumn = checkAnnotationDiscardedColumns(
-    row,
-    index,
-    preserveOriginals,
-  );
-  if (discardedColumn) {
-    errors.push(discardedColumn);
-  }
   const roundTrippableText = checkAnnotationRoundTrippableText(row, index);
   if (roundTrippableText) {
     errors.push(roundTrippableText);
@@ -1132,48 +1044,33 @@ export async function buildRecord(draft: RecordDraft): Promise<MassBankRecord> {
   const annotationEdits = annotations?.map((row, index) =>
     wasAnnotationRowEdited(row, index, annotationHeader),
   );
-  // All-or-nothing per table, not per row: a table's `_PK$ANNOTATION_HEADER`
-  // is shared by every row in it, so it can only be kept or dropped as a
-  // unit. Preserve ONLY when every row carries an `_original` AND none of
-  // them has been edited since it was parsed. Both halves matter:
-  // `wasAnnotationRowEdited` reports `edited: false` for a row with no
-  // `_original` at all (nothing to compare against), so a table where NO
-  // row has one would otherwise look "unanimously unedited" and wrongly
-  // inherit whatever stale `_PK$ANNOTATION_HEADER` the draft happened to
-  // carry — even though every row is about to be rebuilt from typed fields,
-  // with no verbatim row underneath that header to justify keeping it. The
-  // moment any row HAS been edited (or its `_original` could not be
-  // confirmed safe, see `reparseAnnotationOriginal`), every row's
-  // `_original` is discarded and the row is rebuilt from typed fields
-  // instead — including rows that themselves were never touched, because a
-  // row whose real source column count wouldn't survive that rebuild must
-  // still be refused (checkAnnotationDiscardedColumns), and a mix of
-  // "printed verbatim" and "rebuilt" rows under one shared header would be
-  // inconsistent regardless.
-  const preserveOriginals =
-    annotations !== undefined &&
-    annotationEdits !== undefined &&
-    annotations.every(
-      (row: AnnotationWithOriginal) => row._original !== undefined,
-    ) &&
-    annotationEdits.every((check) => !check.edited);
+  // Per row, not per table. Before 0.5.1 a rebuilt row emitted columns by field
+  // *presence*, so it could differ in width from a verbatim row printed beside it
+  // under one shared header — hence the all-or-nothing rule. Header-driven
+  // emission makes a rebuilt row produce exactly the header's columns, so a
+  // verbatim row and a rebuilt one are now interchangeable and each row keeps or
+  // drops its own `_original` on its own merits.
+  const preservedRows =
+    annotations?.map(
+      (row: AnnotationWithOriginal, index: number) =>
+        row._original !== undefined &&
+        annotationEdits?.[index]?.edited === false,
+    ) ?? [];
   if (annotations !== undefined) {
     for (const [index, row] of annotations.entries()) {
       const originalError = annotationEdits?.[index]?.error;
       if (originalError) {
         errors.push(originalError);
       }
-      errors.push(...checkAnnotationRow(row, index, preserveOriginals));
+      errors.push(...checkAnnotationRow(row, index, preservedRows[index] === true));
     }
   }
 
-  // _PK$ANNOTATION_HEADER is written verbatim ONLY when preserveOriginals
-  // holds (see below, where `record._PK$ANNOTATION_HEADER` is left
-  // untouched in that case) — so it is only worth guarding then; if
-  // preservation doesn't hold the header is deleted regardless of its
-  // content. See readAnnotationHeader for why this can't join the generic
-  // VERBATIM_STRING_FIELDS sweep above.
-  if (preserveOriginals) {
+  // The header is now what the serializer emits rows against, so it is kept
+  // whenever the draft carries one — not only when every row round-trips
+  // verbatim. It is still guarded: written into the output, a newline in it
+  // would forge rows or fields on reparse.
+  if (preservedRows.some(Boolean)) {
     const header = readAnnotationHeader(draft);
     if (header !== undefined) {
       const headerError = checkVerbatimText('_PK$ANNOTATION_HEADER', header);
@@ -1230,29 +1127,31 @@ export async function buildRecord(draft: RecordDraft): Promise<MassBankRecord> {
 
   if (annotations !== undefined && annotations.length > 0) {
     record.PK$ANNOTATION = annotations
-      .map((a: AnnotationWithOriginal) => ({
+      // Index BEFORE .toSorted — `preservedRows` is in draft order, and sorting
+      // first would pair each row with another row's verdict.
+      .map((a: AnnotationWithOriginal, index: number) => ({
         mz: a.mz,
         ...(a.annotation === undefined ? {} : { annotation: a.annotation }),
         ...(a.exactMass === undefined ? {} : { exactMass: a.exactMass }),
         ...(a.errorPpm === undefined ? {} : { errorPpm: a.errorPpm }),
-        ...(preserveOriginals && a._original !== undefined
+        ...(a.extra === undefined ? {} : { extra: a.extra }),
+        ...(preservedRows[index] === true && a._original !== undefined
           ? { _original: a._original }
           : {}),
       }))
       .toSorted((a, b) => a.mz - b.mz);
-    if (preserveOriginals) {
-      // Keep whatever header the draft carried in (a parsed MassBankRecord
-      // passed straight through — RecordDraft's Omit only blocks object
-      // literals, not variables) so the preserved rows print under the
-      // header they actually belong to, not buildRecord's default. Already
-      // validated above (readAnnotationHeader/checkVerbatimText) before the
-      // errors.length check, so nothing more to do here.
+    if (preservedRows.some(Boolean)) {
+      // At least one row prints its own source text verbatim, so it must print
+      // under the header it was parsed from. Keep whatever the draft carried in
+      // (a parsed MassBankRecord passed straight through — RecordDraft's Omit
+      // only blocks object literals, not variables). Already validated above.
     } else {
-      // buildRecord is about to emit fresh rows rebuilt from typed fields
-      // under its own canonical header, so a header carried in from a
-      // parsed MassBankRecord must not survive — otherwise the serializer
-      // would print the rebuilt rows under a header describing the old ones.
-      delete record._PK$ANNOTATION_HEADER;
+      // Every row is being rebuilt from typed fields. A header the draft
+      // happens to carry may not name the columns those rows populate, and
+      // emitting under it would truncate them — so drop it and let the
+      // serializer derive one that fits.
+      delete (record as { _PK$ANNOTATION_HEADER?: string })
+        ._PK$ANNOTATION_HEADER;
     }
   } else {
     // Keep the canonical shape empty-table-free, matching the PK$NUM_PEAK
