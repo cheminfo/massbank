@@ -1,3 +1,5 @@
+import type { Annotation } from '../record.js';
+
 /**
  * Which typed field a PK$ANNOTATION column feeds, or `null` when the column has
  * no typed field and belongs in `Annotation.extra`.
@@ -101,4 +103,74 @@ export function mapAnnotationHeader(header: string): AnnotationColumn[] | null {
   }
 
   return columns;
+}
+
+/**
+ * The text one column of a row carries, or `undefined` when the row does not
+ * populate that column.
+ *
+ * The single place that decides what a column is worth. The serializer prints
+ * this, and `buildRecord` validates this — reimplementing it on either side is
+ * how a writer and a validator start disagreeing about the same table, which is
+ * the defect class this module exists to remove.
+ * @param ann - the annotation row
+ * @param column - one column of the mapped header
+ * @returns the column's text, or `undefined` when the row leaves it empty
+ */
+export function annotationColumnValue(
+  ann: Annotation,
+  column: AnnotationColumn,
+): string | undefined {
+  switch (column.field) {
+    case 'mz': {
+      return ann.mz.toString();
+    }
+    case 'annotation': {
+      return ann.annotation;
+    }
+    case 'exactMass': {
+      return ann.exactMass?.toString();
+    }
+    case 'errorPpm': {
+      return ann.errorPpm?.toString();
+    }
+    case null: {
+      return ann.extra?.[column.token];
+    }
+    default: {
+      // Unreachable: every AnnotationField is matched above. Present only
+      // because the lint rules require both exhaustive cases and a default.
+      return undefined;
+    }
+  }
+}
+
+/**
+ * Build a header naming exactly the columns the rows populate.
+ *
+ * Used when a record carries no `_PK$ANNOTATION_HEADER` of its own — i.e. it
+ * was hand-built rather than parsed, or every parsed row has been edited and
+ * the source header dropped with them. Deriving beats a fixed default because
+ * the default may claim a column no row fills, and the writer would then have
+ * to either leave a hole (unrepresentable) or shift later columns left (silent
+ * corruption).
+ *
+ * Columns appear in canonical order, with any `extra` keys after the typed
+ * ones, ordered by first appearance so the output is deterministic.
+ * @param rows - the annotation rows about to be serialized
+ * @returns the header value to print after `PK$ANNOTATION:`
+ */
+export function deriveAnnotationHeader(rows: readonly Annotation[]): string {
+  const tokens = ['m/z'];
+  if (rows.some((r) => r.annotation !== undefined)) tokens.push('annotation');
+  if (rows.some((r) => r.exactMass !== undefined)) tokens.push('exact_mass');
+  if (rows.some((r) => r.errorPpm !== undefined)) tokens.push('error(ppm)');
+
+  const extras = new Set<string>();
+  for (const row of rows) {
+    for (const key of Object.keys(row.extra ?? {})) extras.add(key);
+  }
+  tokens.push(...extras);
+
+  return tokens.join(' ');
 }

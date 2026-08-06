@@ -1,5 +1,9 @@
 import type { AnnotationColumn } from '../parser/annotation-columns.js';
-import { mapAnnotationHeader } from '../parser/annotation-columns.js';
+import {
+  annotationColumnValue,
+  deriveAnnotationHeader,
+  mapAnnotationHeader,
+} from '../parser/annotation-columns.js';
 import type { Annotation, MassBankRecord } from '../record.js';
 
 import type { IRecordSerializer } from './interfaces.js';
@@ -148,7 +152,9 @@ export class RecordSerializer implements IRecordSerializer {
         if (ann._original) {
           lines.push(`  ${ann._original}`);
         } else if (columns) {
-          lines.push(`  ${serializeAnnotationByHeader(ann, columns).join(' ')}`);
+          lines.push(
+            `  ${serializeAnnotationByHeader(ann, columns).join(' ')}`,
+          );
         } else {
           const parts: string[] = [ann.mz.toString()];
           if (ann.annotation) {
@@ -227,45 +233,10 @@ function serializeAnnotationByHeader(
   const parts: string[] = [];
 
   for (const column of columns) {
-    let value: string | undefined;
-    if (column.field === 'mz') value = ann.mz.toString();
-    else if (column.field === 'annotation') value = ann.annotation;
-    else if (column.field === 'exactMass') value = ann.exactMass?.toString();
-    else if (column.field === 'errorPpm') value = ann.errorPpm?.toString();
-    else value = ann.extra?.[column.token];
-
+    const value = annotationColumnValue(ann, column);
     if (value === undefined || value === '') break;
     parts.push(value);
   }
 
   return parts;
-}
-
-/**
- * Build a header naming exactly the columns the rows populate.
- *
- * Used only when a record carries no `_PK$ANNOTATION_HEADER` — i.e. it was
- * hand-built rather than parsed. Deriving beats a fixed default because the
- * default may claim a column no row fills, and the writer would then have to
- * either leave a hole (unrepresentable) or shift later columns left (silent
- * corruption).
- *
- * Columns appear in canonical order, with any `extra` keys after the typed
- * ones, ordered by first appearance so the output is deterministic.
- * @param rows - the annotation rows about to be serialized
- * @returns the header value to print after `PK$ANNOTATION:`
- */
-function deriveAnnotationHeader(rows: readonly Annotation[]): string {
-  const tokens = ['m/z'];
-  if (rows.some((r) => r.annotation !== undefined)) tokens.push('annotation');
-  if (rows.some((r) => r.exactMass !== undefined)) tokens.push('exact_mass');
-  if (rows.some((r) => r.errorPpm !== undefined)) tokens.push('error(ppm)');
-
-  const extras = new Set<string>();
-  for (const row of rows) {
-    for (const key of Object.keys(row.extra ?? {})) extras.add(key);
-  }
-  tokens.push(...extras);
-
-  return tokens.join(' ');
 }

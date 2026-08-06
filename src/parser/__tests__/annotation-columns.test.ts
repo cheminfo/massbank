@@ -18,7 +18,9 @@ describe('normaliseHeaderToken', () => {
 describe('mapAnnotationHeader', () => {
   it('maps the header used by every annotated record in the corpus', () => {
     expect(
-      mapAnnotationHeader('m/z tentative_formula formula_count mass error(ppm)'),
+      mapAnnotationHeader(
+        'm/z tentative_formula formula_count mass error(ppm)',
+      ),
     ).toStrictEqual([
       { token: 'm/z', field: 'mz' },
       { token: 'tentative_formula', field: 'annotation' },
@@ -51,6 +53,7 @@ describe('mapAnnotationHeader', () => {
 
   it('routes an unrecognised token to extra rather than guessing a field', () => {
     const columns = mapAnnotationHeader('m/z something_novel');
+
     expect(columns).toStrictEqual([
       { token: 'm/z', field: 'mz' },
       { token: 'something_novel', field: null },
@@ -61,6 +64,7 @@ describe('mapAnnotationHeader', () => {
     // `error` alone means ppm by convention, but a unit-carrying token must not
     // inherit that meaning — it goes to extra, where nothing is claimed about it.
     const columns = mapAnnotationHeader('m/z error(mDa)');
+
     expect(columns?.[1]).toStrictEqual({ token: 'error(mDa)', field: null });
   });
 
