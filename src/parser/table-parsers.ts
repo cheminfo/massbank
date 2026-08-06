@@ -5,6 +5,8 @@ import type {
   PeakWithOriginal,
 } from '../record.js';
 
+import type { AnnotationColumn } from './annotation-columns.js';
+import { mapAnnotationHeader } from './annotation-columns.js';
 import { startsNewField } from './field-line.js';
 import type { ITableParser } from './interfaces.js';
 
@@ -128,6 +130,12 @@ export class AnnotationTableParser extends BaseTableParser {
           .trim();
       }
     }
+    // Map the header once for the whole table. `null` means the header cannot be
+    // read positionally, and every row falls back to the token-count heuristic
+    // below — the behaviour every release before 0.5.1 had for all headers.
+    const columns = record._PK$ANNOTATION_HEADER
+      ? mapAnnotationHeader(record._PK$ANNOTATION_HEADER)
+      : null;
     let i = startIndex;
 
     while (i < lines.length) {
@@ -139,7 +147,7 @@ export class AnnotationTableParser extends BaseTableParser {
       if (startsNewField(line)) {
         break;
       }
-      const annotation = this.parseAnnotationLine(line);
+      const annotation = this.parseAnnotationLine(line, columns);
       if (annotation) {
         annotations.push(annotation);
       }
@@ -150,7 +158,10 @@ export class AnnotationTableParser extends BaseTableParser {
     return i - startIndex;
   }
 
-  private parseAnnotationLine(line: string): Annotation | null {
+  private parseAnnotationLine(
+    line: string,
+    columns: AnnotationColumn[] | null,
+  ): Annotation | null {
     const parts = line.trim().split(/\s+/);
     if (parts.length === 0) {
       return null;
@@ -170,6 +181,10 @@ export class AnnotationTableParser extends BaseTableParser {
       mz,
       _original: line.trim(),
     };
+
+    if (columns) {
+      return this.assignByHeader(annotation, parts, columns);
+    }
 
     // Format: m/z annotation exact_mass error(ppm)
     // The header tells us the format, so we parse accordingly
@@ -221,6 +236,64 @@ export class AnnotationTableParser extends BaseTableParser {
         // 2 parts: m/z annotation
         annotation.annotation = secondPart;
       }
+    }
+
+    return annotation;
+  }
+
+  /**
+   * Assign a row's tokens to the columns the header declared, positionally.
+   *
+   * Column 0 is the m/z and is already parsed by the caller. Every later token
+   * goes where the header says it goes — no inference from how many tokens the
+   * row happens to have, which is the defect this replaces.
+   *
+   * Surplus tokens (more tokens than the header has columns) are joined into
+   * the last column's value rather than dropped: an annotation containing a
+   * space is far likelier than a row that genuinely has extra columns, and
+   * dropping would be the silent loss we are removing. No record in the corpus
+   * exercises this — all 1156 annotated rows match their header exactly — so it
+   * is a decision about hypothetical input, made in the direction of keeping
+   * data.
+   *
+   * A numeric field whose token will not parse is left absent rather than
+   * stored as NaN; `_original` still carries the row's exact text.
+   * @param annotation - the row so far, carrying `mz` and `_original`
+   * @param parts - the row's whitespace-delimited tokens
+   * @param columns - the mapped header, in order
+   * @returns the populated row
+   */
+  private assignByHeader(
+    annotation: AnnotationWithOriginal,
+    parts: string[],
+    columns: AnnotationColumn[],
+  ): Annotation {
+    const lastIndex = columns.length - 1;
+
+    for (let index = 1; index < columns.length; index++) {
+      const column = columns[index];
+      if (column === undefined) continue;
+
+      const raw =
+        index === lastIndex && parts.length > columns.length
+          ? parts.slice(index).join(' ')
+          : parts[index];
+      if (raw === undefined || raw === '') continue;
+
+      if (column.field === null) {
+        annotation.extra = { ...annotation.extra, [column.token]: raw };
+        continue;
+      }
+      if (column.field === 'annotation') {
+        annotation.annotation = raw;
+        continue;
+      }
+      if (column.field === 'mz') continue; // already parsed by the caller
+
+      const value = Number.parseFloat(raw);
+      if (Number.isNaN(value)) continue;
+      if (column.field === 'exactMass') annotation.exactMass = value;
+      else annotation.errorPpm = value;
     }
 
     return annotation;

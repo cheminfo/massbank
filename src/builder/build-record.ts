@@ -144,6 +144,7 @@ function reparseAnnotationOriginal(
   original: string,
   index: number,
   mz: number,
+  header: string,
 ): AnnotationOriginalReparse {
   const location = describeField('PK$ANNOTATION', index, '_original');
 
@@ -161,7 +162,7 @@ function reparseAnnotationOriginal(
   let parsed: MassBankRecord;
   try {
     parsed = parseRecord(
-      `ACCESSION: reparse-check\nPK$ANNOTATION: m/z\n  ${original}\n//\n`,
+      `ACCESSION: reparse-check\nPK$ANNOTATION: ${header}\n  ${original}\n//\n`,
     );
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -237,11 +238,17 @@ function annotationTypedFieldsMatch(
 function wasAnnotationRowEdited(
   row: AnnotationWithOriginal,
   index: number,
+  header: string,
 ): { edited: boolean; error?: BuildError } {
   if (row._original === undefined) {
     return { edited: false };
   }
-  const reparse = reparseAnnotationOriginal(row._original, index, row.mz);
+  const reparse = reparseAnnotationOriginal(
+    row._original,
+    index,
+    row.mz,
+    header,
+  );
   if (reparse.error) {
     return { edited: true, error: reparse.error };
   }
@@ -1105,8 +1112,25 @@ export async function buildRecord(draft: RecordDraft): Promise<MassBankRecord> {
   // Per-row edit/safety check, computed once up front so both
   // `preserveOriginals` below and the per-row loop can reuse it without
   // reparsing the same `_original` twice.
+  //
+  // The reparse MUST use the record's own header. Since 0.5.1 the parser reads
+  // columns from the header, so reparsing under a stub (this used to hardcode
+  // `m/z`) drops every column past the first, makes an untouched row look
+  // edited, and silently discards an `_original` that was reproducing a numeric
+  // literal verbatim — turning `1888.20` into `1888.2` and failing the
+  // byte-exact round-trip SerializationRule enforces.
+  // A header carrying a newline is rejected further down by the
+  // `_PK$ANNOTATION_HEADER` injection guard. It must NOT reach the reparse: the
+  // synthetic record would break on the injected line and the failure would be
+  // reported against the row's `_original`, blaming the wrong field for a fault
+  // in the header. Fall back to the neutral stub and let the real guard speak.
+  const rawAnnotationHeader = readAnnotationHeader(draft);
+  const annotationHeader =
+    rawAnnotationHeader !== undefined && !/[\n\r]/.test(rawAnnotationHeader)
+      ? rawAnnotationHeader
+      : 'm/z';
   const annotationEdits = annotations?.map((row, index) =>
-    wasAnnotationRowEdited(row, index),
+    wasAnnotationRowEdited(row, index, annotationHeader),
   );
   // All-or-nothing per table, not per row: a table's `_PK$ANNOTATION_HEADER`
   // is shared by every row in it, so it can only be kept or dropped as a

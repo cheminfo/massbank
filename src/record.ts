@@ -13,6 +13,17 @@ export interface Annotation {
   annotation?: string;
   exactMass?: number;
   errorPpm?: number;
+  /**
+   * Columns the PK$ANNOTATION header names that have no typed field above —
+   * `formula_count` in the common contributor layout, for example. Keyed by the
+   * header token exactly as written, so the serializer can look a column up by
+   * the very name it is about to print.
+   *
+   * This is what makes rebuilding a row from typed fields lossless. Without it
+   * the only way to keep such a column was to reprint the row's source text
+   * verbatim, which is why `_original` used to carry the whole burden.
+   */
+  extra?: Record<string, string>;
 }
 
 export interface PeakWithOriginal extends Peak {
