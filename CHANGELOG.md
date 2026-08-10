@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/cheminfo/massbank/compare/v0.5.0...v0.5.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* read PK$ANNOTATION columns from the header instead of the token count ([#18](https://github.com/cheminfo/massbank/issues/18)) ([ad4f55b](https://github.com/cheminfo/massbank/commit/ad4f55b0312653bc157267166b5a33c95daddcc7))
+
 ## [0.5.0](https://github.com/cheminfo/massbank/compare/v0.4.1...v0.5.0) (2026-08-03)
 
 
