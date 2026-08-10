@@ -1,3 +1,9 @@
+import type { AnnotationColumn } from '../parser/annotation-columns.ts';
+import {
+  annotationColumnValue,
+  deriveAnnotationHeader,
+  mapAnnotationHeader,
+} from '../parser/annotation-columns.ts';
 import { parseRecord } from '../parser/parse-record.ts';
 import type {
   Annotation,
@@ -34,16 +40,6 @@ export type RecordDraft = Partial<
   PK$PEAK?: Peak[];
   PK$ANNOTATION?: Annotation[];
 };
-
-/**
- * Mirrors the parser's own numeric test (table-parsers.ts) so buildRecord
- * rejects exactly what the parser cannot tell apart from a number.
- * @param value - the annotation text to test
- * @returns true if the parser would read this text back as a number
- */
-function looksNumeric(value: string): boolean {
-  return !Number.isNaN(Number.parseFloat(value));
-}
 
 /**
  * Build the four location fields every `BuildError` carries — the
@@ -144,6 +140,7 @@ function reparseAnnotationOriginal(
   original: string,
   index: number,
   mz: number,
+  header: string,
 ): AnnotationOriginalReparse {
   const location = describeField('PK$ANNOTATION', index, '_original');
 
@@ -161,7 +158,7 @@ function reparseAnnotationOriginal(
   let parsed: MassBankRecord;
   try {
     parsed = parseRecord(
-      `ACCESSION: reparse-check\nPK$ANNOTATION: m/z\n  ${original}\n//\n`,
+      `ACCESSION: reparse-check\nPK$ANNOTATION: ${header}\n  ${original}\n//\n`,
     );
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -219,8 +216,8 @@ function annotationTypedFieldsMatch(
  * (freshly added by a caller, never parsed) has nothing to compare against
  * and is therefore never itself "edited" by this definition. That alone does
  * NOT make it eligible for table-wide preservation, though — see
- * `buildRecord`'s `preserveOriginals`, which additionally requires every row
- * to carry an `_original` at all.
+ * `buildRecord`'s `preservedRows`, which additionally requires the row to
+ * carry an `_original` at all.
  *
  * When `_original` cannot be confirmed safe to reparse at all — see
  * `reparseAnnotationOriginal` for the three cases — this reports the row as
@@ -237,128 +234,21 @@ function annotationTypedFieldsMatch(
 function wasAnnotationRowEdited(
   row: AnnotationWithOriginal,
   index: number,
+  header: string,
 ): { edited: boolean; error?: BuildError } {
   if (row._original === undefined) {
     return { edited: false };
   }
-  const reparse = reparseAnnotationOriginal(row._original, index, row.mz);
+  const reparse = reparseAnnotationOriginal(
+    row._original,
+    index,
+    row.mz,
+    header,
+  );
   if (reparse.error) {
     return { edited: true, error: reparse.error };
   }
   return { edited: !annotationTypedFieldsMatch(row, reparse.annotation) };
-}
-
-/**
- * A row parsed from a real PK$ANNOTATION table can carry a column the parser
- * never mapped into any typed field, because table-parsers.ts's per-token-count
- * branches are positional and not every one accounts for every token — see
- * `checkAnnotationShape`'s docstring for the full branch-by-branch breakdown
- * this function and that one are both driven by. The two branches this check
- * actually flags: a 3-token row only maps its third token when it looks
- * numeric (otherwise the branch falls back to `[mz, annotation]` and drops it
- * — a real shape, e.g. lipid annotations such as
- * `"494.35 1 [lyso_PC(alkyl-18:0,-)]-"`), and a row of 5 or more tokens is
- * always read as `[mz, annotation]` only, regardless of what follows. The
- * 1/2/4-token branches assign every token unconditionally, so they never
- * drop a column this check would catch — a non-numeric token landing in
- * `exactMass`/`errorPpm` there becomes `NaN` instead (e.g.
- * `"100.25 [M+H]+ notanumber alsonot"` assigns all 4 tokens), caught
- * separately by `checkAnnotationFiniteValues`, not by this check.
- *
- * `RecordDraft` types `PK$ANNOTATION` as `Annotation[]`, which has no
- * `_original`, but a caller can still pass a parsed `MassBankRecord` through
- * — the `Omit` only blocks object literals, not variables — so `_original`
- * can be present at runtime even though the type says otherwise. When a
- * token was dropped this way, rebuilding from the mapped fields alone would
- * silently reprint the row without it, under a header that still claims the
- * dropped column exists.
- *
- * That is only a real loss when the row's `_original` is actually about to
- * be discarded and rebuilt from typed fields. When `preserveOriginals` is
- * true — the whole table round-trips unedited, see `wasAnnotationRowEdited`
- * — this row prints as its own `_original` text verbatim instead, so a
- * column the typed fields don't capture isn't lost, it just isn't reflected
- * in `row.exactMass`/`row.errorPpm`; this check is a no-op in that case.
- *
- * A caller's own edits (which may legitimately reduce the token count, e.g.
- * clearing `errorPpm`) are unaffected: this only inspects `_original`, which
- * a hand-built draft row never carries.
- * @param row - the annotation row to check
- * @param index - the row's position in the draft, for error reporting
- * @param preserveOriginals - true when no row in the table has been edited,
- * so this row's `_original` (if any) is being kept rather than discarded
- * @returns a `BuildError` when `_original` is being discarded and the
- * parser did not map every token of `row._original` into a typed field
- */
-function checkAnnotationDiscardedColumns(
-  row: AnnotationWithOriginal,
-  index: number,
-  preserveOriginals: boolean,
-): BuildError | undefined {
-  if (row._original === undefined || preserveOriginals) {
-    return undefined;
-  }
-  const parts = row._original.trim().split(/\s+/);
-  const tokenCount = parts.length;
-  const location = describeField('PK$ANNOTATION', index);
-
-  // Both branches below report the same code: a caller's remedy is the same
-  // regardless of which one fired ("this row carries more source columns
-  // than the typed shape can hold; reduce it to a supported combination, or
-  // accept the loss") — see checkAnnotationShape's docstring for the full
-  // token-count argument this and that function are both driven by.
-  if (tokenCount === 3) {
-    const third = parts[2];
-    if (third === undefined || !looksNumeric(third)) {
-      return {
-        code: 'ANNOTATION_DISCARDED_COLUMN',
-        ...location,
-        message: `PK$ANNOTATION row ${index} (mz ${row.mz}): the source row has 3 columns, but the third column ("${third ?? ''}") does not look numeric, so the parser reads this row as [mz, annotation] only — the third column would be lost if this row is rebuilt.`,
-      };
-    }
-    return undefined;
-  }
-
-  if (tokenCount >= 5) {
-    return {
-      code: 'ANNOTATION_DISCARDED_COLUMN',
-      ...location,
-      message: `PK$ANNOTATION row ${index} (mz ${row.mz}): the source row has ${tokenCount} columns, but the parser has no format beyond 4 columns and reads it as [mz, annotation] only — columns beyond the second would be lost if this row is rebuilt.`,
-    };
-  }
-  return undefined;
-}
-
-/**
- * PK$ANNOTATION rows are whitespace-delimited tokens (table-parsers.ts splits
- * on `/\s+/`). An `annotation` that is empty, whitespace-only, or contains
- * internal whitespace changes the token count on reparse — which the parser
- * reads as an entirely different field layout, not as a multi-word value.
- * Leading/trailing whitespace does NOT change the token count (the parser's
- * `line.trim()` absorbs it into the surrounding separator before splitting),
- * but it is trimmed away on reparse, so the reparsed value is a different
- * string than the one supplied — the same silent-corruption shape with a
- * different cause.
- * @param row - the annotation row to check
- * @param index - the row's position in the draft, for error reporting
- * @returns a `BuildError` when `annotation` cannot survive as the same
- * string, at the same token position, on reparse
- */
-function checkAnnotationRoundTrippableText(
-  row: Annotation,
-  index: number,
-): BuildError | undefined {
-  if (row.annotation === undefined) {
-    return undefined;
-  }
-  if (row.annotation.length === 0 || /\s/.test(row.annotation)) {
-    return {
-      code: 'ANNOTATION_TEXT_NOT_ROUND_TRIPPABLE',
-      ...describeField('PK$ANNOTATION', index, 'annotation'),
-      message: `PK$ANNOTATION row ${index} (mz ${row.mz}): annotation ${JSON.stringify(row.annotation)} is empty, whitespace-only, contains internal whitespace, or has leading/trailing whitespace. PK$ANNOTATION rows are whitespace-delimited tokens — such an annotation either changes the token count on reparse, or is trimmed away on reparse so the reparsed value is a different string.`,
-    };
-  }
-  return undefined;
 }
 
 /**
@@ -368,9 +258,15 @@ function checkAnnotationRoundTrippableText(
  * guaranteed to lose them. The actual reparse behaviour varies: `NaN` for
  * `mz` does make the parser bail on that token and drop the whole row, but
  * `Infinity` for `mz` reparses fine (`Number.parseFloat('Infinity')` is
- * `Infinity`, so the row survives). `exactMass`/`errorPpm` have no numeric
- * test at all in the 4-token branch, so a non-finite value there would
- * reparse as literally `NaN`/`Infinity` rather than being discarded.
+ * `Infinity`, so the row survives), and `Infinity` in a mapped
+ * `exactMass`/`errorPpm` column survives too — `assignByHeader` only skips a
+ * token that parses to `NaN`.
+ *
+ * Unlike the header-order guards below, this one runs for EVERY row, including
+ * one printing as its own `_original`. A preserved row with `Infinity` in a
+ * numeric column round-trips perfectly well; it is refused anyway, because the
+ * objection is to the value being in a MassBank record at all, not to it
+ * surviving the trip.
  * @param row - the annotation row to check
  * @param index - the row's position in the draft, for error reporting
  * @returns a `BuildError` per non-finite field among `mz`, `exactMass`, and
@@ -406,164 +302,246 @@ function checkAnnotationFiniteValues(
 }
 
 /**
- * PK$ANNOTATION is a positional table read back by TOKEN COUNT, not by the
- * header it was written under (table-parsers.ts:179-224) — so whether a
- * combination of optional fields survives a round-trip depends on which of
- * the parser's token-count branches it lands in, not on forming a prefix of
- * `[annotation, exactMass, errorPpm]`:
- *
- * - `{}` (1 token), `{annotation}` (2 tokens), and
- *   `{annotation, exactMass, errorPpm}` (4 tokens) always round-trip — a
- *   1-token row has no optional field to misread, the parser reads a 2-token
- *   row as `[mz, annotation]` and a 4-token row as `[mz, annotation,
- *   exactMass, errorPpm]` unconditionally, with no numeric test on either
- *   path.
- * - `{exactMass, errorPpm}` (3 tokens, no annotation) round-trips too — the
- *   parser's 3-token branch recognises "both remaining tokens are numeric"
- *   as `[mz, exactMass, errorPpm]`.
- * - `{annotation, exactMass}` (3 tokens, no errorPpm) round-trips ONLY if
- *   `annotation` does not look numeric — the same 3-token branch would
- *   otherwise take the "both numeric" path and mislabel `annotation` as
- *   `exactMass` and the real `exactMass` as `errorPpm`.
- * - `{exactMass}` or `{errorPpm}` alone (2 tokens) never round-trip — the
- *   2-token branch always reads the second token as `annotation`.
- * - `{annotation, errorPpm}` without `exactMass` (3 tokens) never round-trips
- *   — the 3-token branch has no recovery for this shape, and WHICH field is
- *   corrupted depends on whether `annotation` looks numeric (measured, not
- *   a single uniform failure): if it does, both remaining tokens are read as
- *   `[exactMass, errorPpm]`, so `annotation` is discarded but `errorPpm`
- *   survives correctly in its own slot; if it doesn't, the branch reads
- *   `[annotation, exactMass]` instead, so `annotation` survives but
- *   `errorPpm` is misread as `exactMass`.
- *
- * These four checks only run for a row that is actually about to be rebuilt
- * from these fields — never for one printing as its own `_original` text
- * (`preserveOriginals`, see the caller). That gate is currently unreachable
- * by construction for a genuinely unedited, parser-derived row: every shape
- * table-parsers.ts's 3-token branch can produce is one of the round-trip
- * cases above, never one of the four below, so a row that survived parsing
- * unedited can never trip them. Concretely, a value that LOOKS like it
- * should hit the fourth check below — an `annotation` that looks numeric,
- * e.g. `"100.25 5-methyl 194.08"` — never actually reaches this function
- * with that shape: the parser's own 3-token branch tests the same thing
- * first, via `Number.parseFloat`, and `Number.parseFloat('5-methyl')` is
- * `5` (not `NaN`), so it takes the "both remaining tokens numeric" path and
- * produces `{ mz: 100.25, exactMass: 5, errorPpm: 194.08 }` — `annotation`
- * is never set at all, and the fourth check below requires `annotation` to
- * be set. This gate fires for a hand-built row a caller assembles directly
- * (no `_original`, so `preserveOriginals` is irrelevant to it); a *parsed,
- * unedited* row can never reach it, because the parser's own decision
- * already ruled out every shape that would trip it.
- *
- * Reported as four separate codes rather than one, because each names a
- * different fix: set an annotation, set one alongside `errorPpm`, clear
- * `errorPpm` (or add the `exactMass` it needs), or rename a numeric-looking
- * annotation.
- * @param row - the annotation row to check
- * @param index - the row's position in the draft, for error reporting
- * @returns a `BuildError` when the row cannot be serialized and reparsed as
- * itself
+ * One header column paired with the text the row puts in it — `undefined` when
+ * the row leaves that column empty. Both header-order guards below read this,
+ * and it is produced by `annotationColumnValue`, the same function the
+ * serializer prints from, so a guard can never disagree with the writer about
+ * what a column is worth.
  */
-function checkAnnotationShape(
+interface AnnotationCell {
+  column: AnnotationColumn;
+  value: string | undefined;
+}
+
+/**
+ * Pair every column of the header a row will be emitted under with that row's
+ * value for it.
+ * @param row - the annotation row about to be rebuilt
+ * @param columns - the mapped header the row will be printed under, in order
+ * @returns one cell per header column, in header order
+ */
+function annotationCells(
+  row: Annotation,
+  columns: AnnotationColumn[],
+): AnnotationCell[] {
+  return columns.map((column) => ({
+    column,
+    value: annotationColumnValue(row, column),
+  }));
+}
+
+/**
+ * Whether a cell contributes a token to the emitted row. The serializer stops
+ * at the first column with no value AND at the first empty one
+ * (record-serializer.ts breaks on `undefined` or `''`), so an empty string is
+ * an absent column, not a blank token.
+ * @param cell - the cell to test
+ * @returns true when the column is printed
+ */
+function isFilled(cell: AnnotationCell): boolean {
+  return cell.value !== undefined && cell.value !== '';
+}
+
+/**
+ * A row may not populate a column while an earlier one is absent.
+ *
+ * This is `ANNOTATION_EXACT_MASS_WITHOUT_ANNOTATION` and its two siblings,
+ * generalised: they were the same rule written out against the old fixed
+ * `[mz, annotation, exact_mass, error(ppm)]` order, at a time when the parser
+ * inferred that order from the token count. The parser now reads the record's
+ * own header, so the rule has to be expressed against that header instead —
+ * and the same combination is legal under one header and illegal under
+ * another. `{mz, exactMass}` under `m/z exact_mass` is a clean two-token row;
+ * under `m/z annotation exact_mass` it is a hole.
+ *
+ * A hole cannot be printed: MassBank documents no placeholder for an absent
+ * middle column and the corpus contains no example, so inventing one would be
+ * fabrication. Emitting the later columns anyway would shift them left and
+ * have them reparse as the wrong field — the corruption this release removes,
+ * reintroduced by the fix. `serializeAnnotationByHeader` therefore stops at
+ * the hole, which silently drops everything after it; this guard refuses the
+ * row before that can happen.
+ *
+ * Reachable by ordinary editing, not just by hand-assembling a draft: with the
+ * corpus header `m/z tentative_formula formula_count mass error(ppm)`, clearing
+ * `mass` while keeping `error(ppm)` produces exactly this shape.
+ * @param cells - the row's cells, in header order
+ * @param row - the annotation row, for error reporting
+ * @param index - the row's position in the draft, for error reporting
+ * @returns a `BuildError` naming the hole and the column stranded after it
+ */
+function checkAnnotationColumnGap(
+  cells: AnnotationCell[],
   row: Annotation,
   index: number,
 ): BuildError | undefined {
-  const { annotation, exactMass, errorPpm, mz } = row;
-  const location = describeField('PK$ANNOTATION', index);
+  const holeIndex = cells.findIndex((cell) => !isFilled(cell));
+  if (holeIndex === -1) {
+    return undefined;
+  }
+  const stranded = cells.slice(holeIndex + 1).find(isFilled);
+  if (stranded === undefined) {
+    return undefined;
+  }
+  const hole = cells[holeIndex];
+  return {
+    code: 'ANNOTATION_COLUMN_GAP',
+    ...describeField('PK$ANNOTATION', index),
+    message: `PK$ANNOTATION row ${index} (mz ${row.mz}): column "${hole?.column.token}" is empty but the later column "${stranded.column.token}" is not. A row must fill an unbroken prefix of its header — there is no placeholder for an absent middle column, so the writer stops at the hole and everything after it is dropped.`,
+  };
+}
 
-  if (
-    annotation === undefined &&
-    exactMass !== undefined &&
-    errorPpm === undefined
-  ) {
-    return {
-      code: 'ANNOTATION_EXACT_MASS_WITHOUT_ANNOTATION',
-      ...location,
-      message: `PK$ANNOTATION row ${index} (mz ${mz}): exactMass is set without annotation or errorPpm. The parser reads a 2-token row as [mz, annotation] unconditionally, so this value would come back as annotation text, not exactMass.`,
-    };
+/**
+ * Every text column a row fills must come back as the same string, at the same
+ * column, when the row is reparsed.
+ *
+ * Rows are whitespace-delimited (`table-parsers.ts` splits on `/\s+/`), so:
+ *
+ * - An empty value is not a blank token — the writer treats it as an absent
+ *   column, so the value is simply lost.
+ * - Leading or trailing whitespace does not change the token count (the
+ *   parser's `line.trim()` absorbs it) but is trimmed away on reparse, so the
+ *   value that comes back differs from the one supplied.
+ * - Internal whitespace splits one value into several tokens, which land in
+ *   several columns — EXCEPT in the final header column, where
+ *   `assignByHeader` joins every surplus token back into it. A multi-word
+ *   value there survives, provided its words are separated by single spaces:
+ *   the join reassembles them with exactly one space each, so `"a  b"` comes
+ *   back as `"a b"`.
+ *
+ * Numeric columns are exempt because their text is produced by
+ * `Number.prototype.toString()` and can never contain whitespace. `extra`
+ * columns are not exempt: they are caller-supplied strings exactly like
+ * `annotation`, and were unguarded before this release only because they did
+ * not exist.
+ * @param cells - the row's cells, in header order
+ * @param row - the annotation row, for error reporting
+ * @param index - the row's position in the draft, for error reporting
+ * @returns one `BuildError` per column whose text cannot survive the trip
+ */
+function checkAnnotationColumnText(
+  cells: AnnotationCell[],
+  row: Annotation,
+  index: number,
+): BuildError[] {
+  const errors: BuildError[] = [];
+  const lastIndex = cells.length - 1;
+
+  for (const [position, cell] of cells.entries()) {
+    const { value } = cell;
+    const isTextColumn =
+      cell.column.field === 'annotation' || cell.column.field === null;
+    if (value === undefined || !isTextColumn) {
+      continue;
+    }
+    const property =
+      cell.column.field === 'annotation'
+        ? 'annotation'
+        : `extra.${cell.column.token}`;
+    const problem = describeAnnotationTextProblem(
+      value,
+      position === lastIndex,
+    );
+    if (problem !== undefined) {
+      errors.push({
+        code: 'ANNOTATION_TEXT_NOT_ROUND_TRIPPABLE',
+        ...describeField('PK$ANNOTATION', index, property),
+        message: `PK$ANNOTATION row ${index} (mz ${row.mz}): column "${cell.column.token}" value ${JSON.stringify(value)} ${problem}`,
+      });
+    }
   }
-  if (
-    annotation === undefined &&
-    exactMass === undefined &&
-    errorPpm !== undefined
-  ) {
-    return {
-      code: 'ANNOTATION_ERROR_PPM_WITHOUT_ANNOTATION',
-      ...location,
-      message: `PK$ANNOTATION row ${index} (mz ${mz}): errorPpm is set without annotation or exactMass. The parser reads a 2-token row as [mz, annotation] unconditionally, so this value would come back as annotation text, not errorPpm.`,
-    };
+
+  return errors;
+}
+
+/**
+ * Why a text column's value cannot survive a reparse, or `undefined` when it
+ * can. Split out from `checkAnnotationColumnText` so each cause states its own
+ * remedy — one shared "unrepresentable" sentence would leave a caller guessing
+ * which of four different edits to make.
+ * @param value - the column's text
+ * @param isFinalColumn - whether this is the last column of the header, the
+ * only one `assignByHeader` rejoins surplus tokens into
+ * @returns the sentence completing "value <...>", or `undefined` when the
+ * value round-trips
+ */
+function describeAnnotationTextProblem(
+  value: string,
+  isFinalColumn: boolean,
+): string | undefined {
+  if (value.length === 0) {
+    return 'is empty. An empty column is not printed as a blank token — the writer treats it as absent, so the value is lost.';
   }
-  if (
-    annotation !== undefined &&
-    exactMass === undefined &&
-    errorPpm !== undefined
-  ) {
-    return {
-      code: 'ANNOTATION_ERROR_PPM_WITHOUT_EXACT_MASS',
-      ...location,
-      message: `PK$ANNOTATION row ${index} (mz ${mz}): errorPpm is set without exactMass. The parser's 3-token branch has no recovery for [annotation, errorPpm]: if annotation "${annotation}" looks numeric, both remaining tokens are read as [exactMass, errorPpm] and annotation is discarded (errorPpm survives correctly); if it is text, the branch reads [annotation, exactMass] instead, so errorPpm is misread as exactMass.`,
-    };
+  if (value.trim() !== value) {
+    return 'has leading or trailing whitespace, which the parser trims on reparse, so the value that comes back differs from the one supplied.';
   }
-  if (
-    annotation !== undefined &&
-    exactMass !== undefined &&
-    errorPpm === undefined &&
-    looksNumeric(annotation)
-  ) {
-    return {
-      code: 'ANNOTATION_TEXT_LOOKS_NUMERIC',
-      ...location,
-      message: `PK$ANNOTATION row ${index} (mz ${mz}): annotation "${annotation}" looks numeric. The parser reads a 3-token [annotation, exactMass] row by testing whether both remaining tokens are numeric; a numeric-looking annotation is then misread as exactMass and the real exactMass is misread as errorPpm.`,
-    };
+  if (!/\s/.test(value)) {
+    return undefined;
+  }
+  if (!isFinalColumn) {
+    return 'contains internal whitespace and is not in the final header column. It would split into several tokens and land in several columns.';
+  }
+  if (value.split(/\s+/).join(' ') !== value) {
+    return 'contains internal whitespace that is not a single space. The final column rejoins its surplus tokens with exactly one space each, so the value that comes back differs from the one supplied.';
   }
   return undefined;
 }
 
 /**
- * Run every PK$ANNOTATION row guard and collect every failure, rather than
- * stopping at the first — the guards are pure and independent of each
- * other's outcome.
+ * Refuse to rebuild a row under a header the parser cannot read positionally.
+ *
+ * `mapAnnotationHeader` returns `null` for a header that does not begin with
+ * the m/z, or that maps two columns onto one field. Under such a header the
+ * serializer falls back to emitting by field presence and the parser falls
+ * back to guessing from the token count — the two independent inferences whose
+ * disagreement is this release's entire subject. Rather than reinstate the old
+ * token-count guard suite for that one case, `buildRecord` declines to rebuild
+ * at all: refusing can lose nothing, and a record whose rows are all unedited
+ * still round-trips, because every row prints as its own `_original`.
+ * @param header - the header the row would be emitted under
+ * @param row - the annotation row, for error reporting
+ * @param index - the row's position in the draft, for error reporting
+ * @returns the `BuildError` to report for this row
+ */
+function annotationHeaderNotMappable(
+  header: string,
+  row: Annotation,
+  index: number,
+): BuildError {
+  return {
+    code: 'ANNOTATION_HEADER_NOT_MAPPABLE',
+    ...describeField('PK$ANNOTATION', index),
+    message: `PK$ANNOTATION row ${index} (mz ${row.mz}): the table's header ${JSON.stringify(header)} cannot be read positionally — it must begin with the m/z column and must not name the same field twice — so a rebuilt row cannot be placed in it. An unedited row is unaffected: it prints as its own source text.`,
+  };
+}
+
+/**
+ * Run every guard that applies to a row being REBUILT from its typed fields.
+ * A row printing as its own `_original` skips all of them: whatever the parser
+ * read out of that text is by definition what the text reparses to, so its
+ * round-trip needs no proving.
  * @param row - the annotation row to check
  * @param index - the row's position in the draft, for error reporting
- * @param preserveOriginals - true when no row in the table has been edited,
- * so this row's `_original` (if any) is being kept rather than discarded
- * @returns every `BuildError` this row fails, in guard order; empty when
- * the row is fully expressible
+ * @param header - the header value the row will be emitted under
+ * @param columns - that header mapped, or `null` when it cannot be read
+ * positionally
+ * @returns every `BuildError` this row fails; empty when it is expressible
  */
-function checkAnnotationRow(
-  row: AnnotationWithOriginal,
+function checkAnnotationRebuild(
+  row: Annotation,
   index: number,
-  preserveOriginals: boolean,
+  header: string,
+  columns: AnnotationColumn[] | null,
 ): BuildError[] {
-  const errors: BuildError[] = [];
-
-  const discardedColumn = checkAnnotationDiscardedColumns(
-    row,
-    index,
-    preserveOriginals,
-  );
-  if (discardedColumn) {
-    errors.push(discardedColumn);
+  if (columns === null) {
+    return [annotationHeaderNotMappable(header, row, index)];
   }
-  const roundTrippableText = checkAnnotationRoundTrippableText(row, index);
-  if (roundTrippableText) {
-    errors.push(roundTrippableText);
-  }
-  errors.push(...checkAnnotationFiniteValues(row, index));
-
-  // A row printing as its own `_original` text is never rebuilt from these
-  // fields, so the shape check below (which only protects a rebuild) cannot
-  // apply — see checkAnnotationShape's docstring for why that gate is
-  // unreachable for a genuinely unedited row regardless.
-  if (row._original !== undefined && preserveOriginals) {
-    return errors;
-  }
-
-  const shape = checkAnnotationShape(row, index);
-  if (shape) {
-    errors.push(shape);
-  }
-  return errors;
+  const cells = annotationCells(row, columns);
+  const gap = checkAnnotationColumnGap(cells, row, index);
+  return [
+    ...(gap === undefined ? [] : [gap]),
+    ...checkAnnotationColumnText(cells, row, index),
+  ];
 }
 
 /**
@@ -773,7 +751,7 @@ function checkPeak(peak: Peak, index: number): BuildError[] {
  * of refusing a draft the parser itself produces without complaint for
  * input like `RECORD_TITLE: ` — rejecting that would make `buildRecord`
  * strictly less capable than `parseRecord`, the same defect the
- * `_original`-preservation rule (see `preserveOriginals`) avoids on the
+ * `_original`-preservation rule (see `preservedRows`) avoids on the
  * PK$ANNOTATION side.
  * An array-valued field element is unaffected either way: record-serializer.ts's
  * truthiness check there guards the array itself, not each element, so an
@@ -846,16 +824,16 @@ export { VERBATIM_ARRAY_FIELDS, VERBATIM_STRING_FIELDS };
  * - `ACCESSION` — mandatory and non-empty, unlike every other field here
  *   (see `checkAccession`).
  * - `PK$ANNOTATION` — each row is validated individually, with its own
- *   per-row error codes (see `checkAnnotationRow`).
+ *   per-row error codes (see `checkAnnotationRebuild`).
  * - `_PK$ANNOTATION_HEADER` — written verbatim ONLY when the annotation
- *   table's `_original` rows are being preserved (`preserveOriginals`); a
+ *   table still has a row printing as its own `_original` (`keepsDraftHeader`); a
  *   generic sweep over `draft` can't reach it at all, since `RecordDraft`'s
  *   `Omit` drops this key from the type a caller can index through (see the
  *   module comment on `RecordDraft`) — so it is read via
  *   `readAnnotationHeader` and guarded with `checkVerbatimText` directly,
- *   gated on `preserveOriginals`, right where `buildRecord` handles the
+ *   gated on `keepsDraftHeader`, right where `buildRecord` handles the
  *   annotation table. `buildRecord` does NOT strip this header
- *   unconditionally — `preserveOriginals` keeps whatever header the draft
+ *   unconditionally — `keepsDraftHeader` keeps whatever header the draft
  *   carried in, verbatim, so a newline in it reaches the output unguarded
  *   unless validated here.
  *
@@ -1049,8 +1027,9 @@ function checkVerbatimText(
  *   unsafe (`checkVerbatimText` at its call site below), or the row itself
  *   unrepresentable — a dropped source column, an unrepresentable
  *   `annotation`/numeric field, or an inexpressible optional-field
- *   combination (`checkAnnotationRow` and the functions it calls; see
- *   `checkAnnotationShape`'s docstring for the full legal/illegal table).
+ *   combination (`checkAnnotationRebuild` and the functions it calls; see
+ *   `checkAnnotationColumnGap`'s docstring for why a legal shape is a
+ *   property of the record's header rather than of the fields alone).
  *
  * `error.buildErrors` carries every failure found, each with a
  * machine-readable `code`, the structured `fieldName`/`rowIndex`/`property`
@@ -1103,59 +1082,88 @@ export async function buildRecord(draft: RecordDraft): Promise<MassBankRecord> {
 
   const annotations = draft.PK$ANNOTATION;
   // Per-row edit/safety check, computed once up front so both
-  // `preserveOriginals` below and the per-row loop can reuse it without
+  // `preservedRows` below and the per-row loop can reuse it without
   // reparsing the same `_original` twice.
+  //
+  // The reparse MUST use the record's own header. Since 0.5.1 the parser reads
+  // columns from the header, so reparsing under a stub (this used to hardcode
+  // `m/z`) drops every column past the first, makes an untouched row look
+  // edited, and silently discards an `_original` that was reproducing a numeric
+  // literal verbatim — turning `1888.20` into `1888.2` and failing the
+  // byte-exact round-trip SerializationRule enforces.
+  // A header carrying a newline is rejected further down by the
+  // `_PK$ANNOTATION_HEADER` injection guard. Only its FIRST physical line may
+  // reach the reparse: the injected text would break the synthetic record and
+  // the failure would be reported against the row's `_original`, blaming the
+  // wrong field for a fault in the header. Substituting a stub instead (as this
+  // did) is worse than useless — under a stub every row looks edited, nothing
+  // is preserved, the header is dropped as unused, and the injection guard
+  // never runs at all.
+  const rawAnnotationHeader = readAnnotationHeader(draft);
+  const [draftHeaderFirstLine] = rawAnnotationHeader?.split(/[\n\r]/) ?? [];
+  // A draft with no header of its own will be printed under a derived one, so
+  // that is the header to measure its rows against.
+  const annotationHeaderForReparse =
+    draftHeaderFirstLine ?? deriveAnnotationHeader(annotations ?? []);
   const annotationEdits = annotations?.map((row, index) =>
-    wasAnnotationRowEdited(row, index),
+    wasAnnotationRowEdited(row, index, annotationHeaderForReparse),
   );
-  // All-or-nothing per table, not per row: a table's `_PK$ANNOTATION_HEADER`
-  // is shared by every row in it, so it can only be kept or dropped as a
-  // unit. Preserve ONLY when every row carries an `_original` AND none of
-  // them has been edited since it was parsed. Both halves matter:
-  // `wasAnnotationRowEdited` reports `edited: false` for a row with no
-  // `_original` at all (nothing to compare against), so a table where NO
-  // row has one would otherwise look "unanimously unedited" and wrongly
-  // inherit whatever stale `_PK$ANNOTATION_HEADER` the draft happened to
-  // carry — even though every row is about to be rebuilt from typed fields,
-  // with no verbatim row underneath that header to justify keeping it. The
-  // moment any row HAS been edited (or its `_original` could not be
-  // confirmed safe, see `reparseAnnotationOriginal`), every row's
-  // `_original` is discarded and the row is rebuilt from typed fields
-  // instead — including rows that themselves were never touched, because a
-  // row whose real source column count wouldn't survive that rebuild must
-  // still be refused (checkAnnotationDiscardedColumns), and a mix of
-  // "printed verbatim" and "rebuilt" rows under one shared header would be
-  // inconsistent regardless.
-  const preserveOriginals =
-    annotations !== undefined &&
-    annotationEdits !== undefined &&
-    annotations.every(
-      (row: AnnotationWithOriginal) => row._original !== undefined,
-    ) &&
-    annotationEdits.every((check) => !check.edited);
+  // Per row, not per table. Before 0.5.1 a rebuilt row emitted columns by field
+  // *presence*, so it could differ in width from a verbatim row printed beside it
+  // under one shared header — hence the all-or-nothing rule. Header-driven
+  // emission makes a rebuilt row produce exactly the header's columns, so a
+  // verbatim row and a rebuilt one are now interchangeable and each row keeps or
+  // drops its own `_original` on its own merits.
+  const preservedRows =
+    annotations?.map(
+      (row: AnnotationWithOriginal, index: number) =>
+        row._original !== undefined &&
+        annotationEdits?.[index]?.edited === false,
+    ) ?? [];
+  // Which header the rows will actually be printed under — the same choice
+  // record-serializer.ts makes, and the yardstick every rebuilt row is measured
+  // against. The draft's own header is kept only while some row still prints as
+  // its own source text; once every row is rebuilt the header is dropped (see
+  // below) and the serializer derives one that fits.
+  const keepsDraftHeader =
+    draftHeaderFirstLine !== undefined && preservedRows.some(Boolean);
+  const effectiveAnnotationHeader = keepsDraftHeader
+    ? draftHeaderFirstLine
+    : deriveAnnotationHeader(annotations ?? []);
+  const effectiveAnnotationColumns = mapAnnotationHeader(
+    effectiveAnnotationHeader,
+  );
   if (annotations !== undefined) {
     for (const [index, row] of annotations.entries()) {
       const originalError = annotationEdits?.[index]?.error;
       if (originalError) {
         errors.push(originalError);
       }
-      errors.push(...checkAnnotationRow(row, index, preserveOriginals));
+      errors.push(...checkAnnotationFiniteValues(row, index));
+      if (preservedRows[index] !== true) {
+        errors.push(
+          ...checkAnnotationRebuild(
+            row,
+            index,
+            effectiveAnnotationHeader,
+            effectiveAnnotationColumns,
+          ),
+        );
+      }
     }
   }
 
-  // _PK$ANNOTATION_HEADER is written verbatim ONLY when preserveOriginals
-  // holds (see below, where `record._PK$ANNOTATION_HEADER` is left
-  // untouched in that case) — so it is only worth guarding then; if
-  // preservation doesn't hold the header is deleted regardless of its
-  // content. See readAnnotationHeader for why this can't join the generic
-  // VERBATIM_STRING_FIELDS sweep above.
-  if (preserveOriginals) {
-    const header = readAnnotationHeader(draft);
-    if (header !== undefined) {
-      const headerError = checkVerbatimText('_PK$ANNOTATION_HEADER', header);
-      if (headerError) {
-        errors.push(headerError);
-      }
+  // The header is written verbatim whenever it is kept, so a newline in it
+  // would forge rows or fields on reparse. Guarded against the RAW value, not
+  // the first line the checks above use — truncating is a reading convenience
+  // here, never a sanitiser.
+  if (keepsDraftHeader && rawAnnotationHeader !== undefined) {
+    const headerError = checkVerbatimText(
+      '_PK$ANNOTATION_HEADER',
+      rawAnnotationHeader,
+    );
+    if (headerError) {
+      errors.push(headerError);
     }
   }
 
@@ -1206,29 +1214,31 @@ export async function buildRecord(draft: RecordDraft): Promise<MassBankRecord> {
 
   if (annotations !== undefined && annotations.length > 0) {
     record.PK$ANNOTATION = annotations
-      .map((a: AnnotationWithOriginal) => ({
+      // Index BEFORE .toSorted — `preservedRows` is in draft order, and sorting
+      // first would pair each row with another row's verdict.
+      .map((a: AnnotationWithOriginal, index: number) => ({
         mz: a.mz,
         ...(a.annotation === undefined ? {} : { annotation: a.annotation }),
         ...(a.exactMass === undefined ? {} : { exactMass: a.exactMass }),
         ...(a.errorPpm === undefined ? {} : { errorPpm: a.errorPpm }),
-        ...(preserveOriginals && a._original !== undefined
+        ...(a.extra === undefined ? {} : { extra: a.extra }),
+        ...(preservedRows[index] === true && a._original !== undefined
           ? { _original: a._original }
           : {}),
       }))
       .toSorted((a, b) => a.mz - b.mz);
-    if (preserveOriginals) {
-      // Keep whatever header the draft carried in (a parsed MassBankRecord
-      // passed straight through — RecordDraft's Omit only blocks object
-      // literals, not variables) so the preserved rows print under the
-      // header they actually belong to, not buildRecord's default. Already
-      // validated above (readAnnotationHeader/checkVerbatimText) before the
-      // errors.length check, so nothing more to do here.
+    if (preservedRows.some(Boolean)) {
+      // At least one row prints its own source text verbatim, so it must print
+      // under the header it was parsed from. Keep whatever the draft carried in
+      // (a parsed MassBankRecord passed straight through — RecordDraft's Omit
+      // only blocks object literals, not variables). Already validated above.
     } else {
-      // buildRecord is about to emit fresh rows rebuilt from typed fields
-      // under its own canonical header, so a header carried in from a
-      // parsed MassBankRecord must not survive — otherwise the serializer
-      // would print the rebuilt rows under a header describing the old ones.
-      delete record._PK$ANNOTATION_HEADER;
+      // Every row is being rebuilt from typed fields. A header the draft
+      // happens to carry may not name the columns those rows populate, and
+      // emitting under it would truncate them — so drop it and let the
+      // serializer derive one that fits.
+      delete (record as { _PK$ANNOTATION_HEADER?: string })
+        ._PK$ANNOTATION_HEADER;
     }
   } else {
     // Keep the canonical shape empty-table-free, matching the PK$NUM_PEAK

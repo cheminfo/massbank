@@ -1,4 +1,10 @@
-import type { MassBankRecord } from '../record.js';
+import type { AnnotationColumn } from '../parser/annotation-columns.js';
+import {
+  annotationColumnValue,
+  deriveAnnotationHeader,
+  mapAnnotationHeader,
+} from '../parser/annotation-columns.js';
+import type { Annotation, MassBankRecord } from '../record.js';
 
 import type { IRecordSerializer } from './interfaces.js';
 
@@ -125,14 +131,30 @@ export class RecordSerializer implements IRecordSerializer {
       lines.push(`PK$SPLASH: ${record.PK$SPLASH}`);
     }
     if (record.PK$ANNOTATION && record.PK$ANNOTATION.length > 0) {
-      // Use original header if available, otherwise use default
+      // A parsed record carries its own header. A hand-built one has none, so
+      // derive a header that actually fits the rows rather than assuming the
+      // four-column default: a row of { mz, exactMass, errorPpm } under a header
+      // claiming an annotation column has a gap in the middle, and a gap cannot
+      // be expressed positionally.
       const header =
-        record._PK$ANNOTATION_HEADER || 'm/z annotation exact_mass error(ppm)';
+        record._PK$ANNOTATION_HEADER ??
+        deriveAnnotationHeader(record.PK$ANNOTATION);
       lines.push(`PK$ANNOTATION: ${header}`);
+      // Emit against the same header map the parser reads with. Emitting by
+      // field *presence* instead — as this did before 0.5.1 — writes a variable
+      // number of columns under a header promising a fixed set, so reader and
+      // writer disagree about the same table.
+      const columns = mapAnnotationHeader(header);
       for (const ann of record.PK$ANNOTATION) {
-        // Use original string if available for perfect round-trip
+        // Prefer the row's own source text: it is the only way to reproduce a
+        // numeric literal whose formatting is not what String(Number) produces
+        // (`1.10`, `1e5`), and SerializationRule compares text, not objects.
         if (ann._original) {
           lines.push(`  ${ann._original}`);
+        } else if (columns) {
+          lines.push(
+            `  ${serializeAnnotationByHeader(ann, columns).join(' ')}`,
+          );
         } else {
           const parts: string[] = [ann.mz.toString()];
           if (ann.annotation) {
@@ -189,4 +211,32 @@ export function createSerializer(): IRecordSerializer {
 export function serializeRecord(record: MassBankRecord): string {
   const serializer = createSerializer();
   return serializer.serialize(record);
+}
+
+/**
+ * Emit one token per header column, in header order.
+ *
+ * Stops at the first column with no value. A gap in the middle cannot be
+ * represented — MassBank documents no placeholder for an absent column and the
+ * corpus contains no example, so inventing one would be fabrication. Emitting
+ * the later columns anyway would shift them left and have them reparse as the
+ * wrong field, which is exactly the corruption 0.5.1 removes. `buildRecord`
+ * rejects a middle gap before it can reach here.
+ * @param ann - the annotation row
+ * @param columns - the mapped header, in order
+ * @returns the row's tokens, ready to join with single spaces
+ */
+function serializeAnnotationByHeader(
+  ann: Annotation,
+  columns: AnnotationColumn[],
+): string[] {
+  const parts: string[] = [];
+
+  for (const column of columns) {
+    const value = annotationColumnValue(ann, column);
+    if (value === undefined || value === '') break;
+    parts.push(value);
+  }
+
+  return parts;
 }

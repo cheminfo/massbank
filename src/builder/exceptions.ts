@@ -15,10 +15,17 @@
  *   docstring) — that is a real behavioural difference, not just a naming
  *   one, so collapsing the codes would either make `ACCESSION` stop
  *   rejecting empty or make every other field start rejecting it.
- * - The four `PK$ANNOTATION` shape failures below (`ANNOTATION_*_WITHOUT_*`,
- *   `ANNOTATION_TEXT_LOOKS_NUMERIC`) each need a different fix from the
- *   caller — add a field, clear one, or rename an annotation — so they are
- *   split one code per failure rather than sharing `field`-based prose.
+ * - `ANNOTATION_COLUMN_GAP` replaced the three `ANNOTATION_*_WITHOUT_*` codes
+ *   in 0.5.1, and `ANNOTATION_TEXT_LOOKS_NUMERIC` and
+ *   `ANNOTATION_DISCARDED_COLUMN` went with them. All of them named illegal
+ *   combinations of optional fields, which was the right shape for a reader
+ *   that inferred the layout from a row's token count. The reader now reads
+ *   the record's own header, so the same combination is legal under one header
+ *   and a hole under another, and the failure is no longer about which fields
+ *   are set — it is about which header column the hole is in. One code naming
+ *   that column beats four naming field combinations that stopped being the
+ *   deciding factor. `ANNOTATION_HEADER_NOT_MAPPABLE` is the separate case
+ *   where there is no readable column order to check a row against at all.
  * - `PEAK_MZ_NEGATIVE`, `PEAK_MZ_NOT_FINITE`, `PEAK_INTENSITY_NOT_FINITE`,
  *   `PEAK_INTENSITY_NEGATIVE`, and the two `PEAK_RELATIVE_INTENSITY_*` codes
  *   name their field in the code itself, unlike `ANNOTATION_NOT_FINITE`:
@@ -56,13 +63,10 @@ export type BuildErrorCode =
   | 'PEAK_ALL_ZERO_INTENSITY'
   | 'PEAK_RELATIVE_INTENSITY_NOT_FINITE'
   | 'PEAK_RELATIVE_INTENSITY_NEGATIVE'
-  | 'ANNOTATION_DISCARDED_COLUMN'
   | 'ANNOTATION_TEXT_NOT_ROUND_TRIPPABLE'
   | 'ANNOTATION_NOT_FINITE'
-  | 'ANNOTATION_EXACT_MASS_WITHOUT_ANNOTATION'
-  | 'ANNOTATION_ERROR_PPM_WITHOUT_ANNOTATION'
-  | 'ANNOTATION_ERROR_PPM_WITHOUT_EXACT_MASS'
-  | 'ANNOTATION_TEXT_LOOKS_NUMERIC'
+  | 'ANNOTATION_COLUMN_GAP'
+  | 'ANNOTATION_HEADER_NOT_MAPPABLE'
   | 'ANNOTATION_ORIGINAL_LINE_INJECTION'
   | 'ANNOTATION_ORIGINAL_UNREADABLE';
 
@@ -92,11 +96,11 @@ export interface BuildError {
    */
   rowIndex?: number;
   /**
-   * The row's specific property the failure is about, e.g. `'mz'` or
-   * `'_original'`, present only when the failure concerns one property
-   * rather than the whole row — a `PK$ANNOTATION` shape failure
-   * (`ANNOTATION_TEXT_LOOKS_NUMERIC` and its siblings) spans the combination
-   * of several properties at once and so has none.
+   * The row's specific property the failure is about, e.g. `'mz'`,
+   * `'_original'`, or `'extra.formula_count'`, present only when the failure
+   * concerns one property rather than the whole row — `ANNOTATION_COLUMN_GAP`
+   * and `ANNOTATION_HEADER_NOT_MAPPABLE` are facts about the row's shape as a
+   * whole and so have none.
    */
   property?: string;
   /**
